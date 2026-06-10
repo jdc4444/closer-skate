@@ -84,6 +84,8 @@ export function makeSkater({ outfit = 0xffd166, accent = 0xffffff, hair = 0x241a
   tail.rotation.x = Math.PI * 0.82;
   rig.add(tail);
 
+  root.traverse(o => { if (o.isMesh) o.castShadow = true; });
+
   function animate(t, speed, lean) {
     const cadence = 2.2 + speed * 0.16;
     const ph = t * cadence;
@@ -103,56 +105,76 @@ export function makeSkater({ outfit = 0xffd166, accent = 0xffffff, hair = 0x241a
 }
 
 // ---------------------------------------------------------------- trails
+// Ribbon of light hugging the surface behind each skater.
 export class Trail {
-  constructor(scene, color = 0xffffff, length = 56) {
+  constructor(scene, color = 0xffffff, length = 46, width = 0.24) {
     this.len = length;
-    this.positions = new Float32Array(length * 3);
+    this.width = width;
+    this.samples = [];          // {p, side} newest first
+    this.positions = new Float32Array(length * 2 * 3);
     this.geo = new THREE.BufferGeometry();
     this.geo.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    const colors = new Float32Array(length * 3);
+    const colors = new Float32Array(length * 2 * 3);
     const c = new THREE.Color(color);
     for (let i = 0; i < length; i++) {
-      const f = 1 - i / (length - 1);          // head bright -> tail dark
-      colors[i * 3] = c.r * f * f;
-      colors[i * 3 + 1] = c.g * f * f;
-      colors[i * 3 + 2] = c.b * f * f;
+      const f = Math.pow(1 - i / (length - 1), 1.6);
+      for (let k = 0; k < 2; k++) {
+        colors[(i * 2 + k) * 3] = c.r * f;
+        colors[(i * 2 + k) * 3 + 1] = c.g * f;
+        colors[(i * 2 + k) * 3 + 2] = c.b * f;
+      }
     }
     this.geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    this.line = new THREE.Line(this.geo, new THREE.LineBasicMaterial({
+    const index = [];
+    for (let i = 0; i < length - 1; i++) {
+      const a = i * 2, b = i * 2 + 1, d = i * 2 + 2, e = i * 2 + 3;
+      index.push(a, b, d, b, e, d);
+    }
+    this.geo.setIndex(index);
+    this.mesh = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({
       vertexColors: true, blending: THREE.AdditiveBlending,
-      transparent: true, opacity: 0.85, depthWrite: false,
+      transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide,
     }));
-    this.line.frustumCulled = false;
-    scene.add(this.line);
+    this.mesh.frustumCulled = false;
+    scene.add(this.mesh);
+    this.line = this.mesh;       // kept name for disposal call-sites
     this.primed = false;
     this.acc = 0;
+    this._side = new THREE.Vector3();
   }
 
-  update(dt, pos) {
+  update(dt, pos, up, dir) {
+    this._side.crossVectors(up, dir);
+    if (this._side.lengthSq() < 1e-6) this._side.set(1, 0, 0);
+    this._side.normalize();
     if (!this.primed) {
-      for (let i = 0; i < this.len; i++) pos.toArray(this.positions, i * 3);
+      this.samples.length = 0;
+      for (let i = 0; i < this.len; i++) this.samples.push({ p: pos.clone(), side: this._side.clone() });
       this.primed = true;
     }
     this.acc += dt;
-    if (this.acc < 0.022) {
-      pos.toArray(this.positions, 0); // keep head glued to the skate
-      this.geo.attributes.position.needsUpdate = true;
-      return;
+    if (this.acc >= 0.024) {
+      this.acc = 0;
+      const tail = this.samples.pop();
+      tail.p.copy(pos);
+      tail.side.copy(this._side);
+      this.samples.unshift(tail);
+    } else {
+      this.samples[0].p.copy(pos);
+      this.samples[0].side.copy(this._side);
     }
-    this.acc = 0;
-    this.positions.copyWithin(3, 0, (this.len - 1) * 3);
-    pos.toArray(this.positions, 0);
-    this.geo.attributes.position.needsUpdate = true;
-  }
-
-  setColor(hex) {
-    const c = new THREE.Color(hex);
-    const col = this.geo.attributes.color;
     for (let i = 0; i < this.len; i++) {
-      const f = 1 - i / (this.len - 1);
-      col.setXYZ(i, c.r * f * f, c.g * f * f, c.b * f * f);
+      const sm = this.samples[i];
+      const w = this.width * (1 - i / (this.len - 1) * 0.85);
+      const o = i * 6;
+      this.positions[o] = sm.p.x + sm.side.x * w;
+      this.positions[o + 1] = sm.p.y + sm.side.y * w;
+      this.positions[o + 2] = sm.p.z + sm.side.z * w;
+      this.positions[o + 3] = sm.p.x - sm.side.x * w;
+      this.positions[o + 4] = sm.p.y - sm.side.y * w;
+      this.positions[o + 5] = sm.p.z - sm.side.z * w;
     }
-    col.needsUpdate = true;
+    this.geo.attributes.position.needsUpdate = true;
   }
 }
 
