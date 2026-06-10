@@ -3,8 +3,10 @@
 A gravity-shifting rollerskating game inspired by Art Camp's treatment for
 Elton John's "Hold Me Closer": *"gliding on the walls and ceilings, through
 windows, on rooftops... as buildings curve and whirl around the dancers.
-The city becomes an endless nightclub."* Visual direction after **Humanity**
-(Enhance Games): porcelain monoliths floating in a duochrome sky.
+The city becomes an endless nightclub."* Now staged as a neon-noir,
+cyberpunk night city: dark glass towers full of lit windows, kanji neon,
+animated billboards, streetlights over wet mirror asphalt, ground and
+flying traffic, and a troupe of articulated skaters at your back.
 
 ## How it plays
 
@@ -45,7 +47,10 @@ sidechain-pumping pads) plus skate-roll noise tied to your speed.
 ## Architecture
 
 - `src/surface.js` — surface locomotion on axis-aligned architecture:
-  support/wall queries, convex edge-wrap, concave wall-climb.
+  support/wall queries, convex edge-wrap, concave wall-climb, rotating
+  platform support.
+- Rendering: PMREM neon environments for glass reflections, a true planar
+  Reflector as the wet street, PCF soft shadows, bloom, film grain.
 - `src/city.js` — endless chain of authored set-pieces (Boulevard, Tower
   wall-ride, Window Wall, Rooftop Run, the Fold arch with its upside-down
   underside, Canyon), each contributing collision boxes + the pack's route.

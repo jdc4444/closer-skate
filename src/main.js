@@ -9,7 +9,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { nightLabel, venueName, blendedAtmosphere } from './palettes.js';
+import { Reflector } from 'three/addons/objects/Reflector.js';
+import { nightLabel, venueName, blendedAtmosphere, eraPalette } from './palettes.js';
 import { City, CHUNK } from './city.js';
 import { Sky } from './sky.js';
 import * as SURF from './surface.js';
@@ -22,26 +23,26 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xe06a72, 30, 290);
+scene.fog = new THREE.Fog(0x551b38, 26, 240);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1600);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.32, 0.5, 0.92);
+  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.6, 0.72);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
-const ambient = new THREE.AmbientLight(0xffd2b8, 1.05);
+const ambient = new THREE.AmbientLight(0x6a5070, 0.72);
 scene.add(ambient);
-const dirLight = new THREE.DirectionalLight(0xfff1d6, 1.55);
+const dirLight = new THREE.DirectionalLight(0x9a86c8, 0.9);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
 dirLight.shadow.camera.left = -90;
@@ -55,10 +56,53 @@ scene.add(dirLight);
 scene.add(dirLight.target);
 const LIGHT_OFF = new THREE.Vector3(34, 80, -28);
 // soft opposing fill so facades never go flat when the key light grazes them
-const fillLight = new THREE.DirectionalLight(0xffb8d8, 0.5);
+const fillLight = new THREE.DirectionalLight(0xffb8d8, 0.4);
 scene.add(fillLight);
 scene.add(fillLight.target);
 const FILL_OFF = new THREE.Vector3(-46, 18, 52);
+
+// environment reflections for the glass city, one per night mood
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envCache = new Map();
+function envFor(night) {
+  const key = ((night % 5) + 5) % 5;
+  if (envCache.has(key)) return envCache.get(key);
+  const p = eraPalette(key);
+  const s = new THREE.Scene();
+  s.background = new THREE.Color(p.skyBelow);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(50, 16, 12),
+    new THREE.MeshBasicMaterial({ color: p.horizon, side: THREE.BackSide }));
+  s.add(dome);
+  const cols = [p.trim, p.neon2, p.sign, 0xfff2e0];
+  for (let i = 0; i < 10; i++) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(8, 16),
+      new THREE.MeshBasicMaterial({ color: cols[i % 4] }));
+    const a = (i / 10) * Math.PI * 2;
+    m.position.set(Math.cos(a) * 24, (i % 3) * 9 - 6, Math.sin(a) * 24);
+    m.lookAt(0, 0, 0);
+    s.add(m);
+  }
+  const floor = new THREE.Mesh(new THREE.CircleGeometry(45, 16),
+    new THREE.MeshBasicMaterial({ color: p.street }));
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -10;
+  s.add(floor);
+  const tex = pmrem.fromScene(s, 0.04).texture;
+  envCache.set(key, tex);
+  return tex;
+}
+scene.environment = envFor(0);
+
+// the wet street: a true mirror plane gliding under the city
+const mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
+  clipBias: 0.003,
+  textureWidth: 512,
+  textureHeight: 512,
+  color: 0x3a4150,
+});
+mirror.rotation.x = -Math.PI / 2;
+mirror.position.y = 0.02;
+scene.add(mirror);
 
 const city = new City(scene);
 const sky = new Sky(scene);
@@ -417,12 +461,10 @@ function updatePlayer(dt) {
     if (player.p.y < -50 || player.p.y > 240 || !isFinite(player.p.y)) respawn();
   }
 
-  // windows + recruits
-  const win = city.tryWindow(player.p, player.prevP);
-  if (win && playing) {
-    flow += 120;
-    audio.blip([659, 880, 1318], 'triangle', 0.05, 0.15, 0.4);
-    toast('THROUGH THE WINDOW', 1.1);
+  // traffic is real: clip a car and you eat asphalt
+  if (playing && player.grounded && player.invulnT <= 0 && city.carHit(player.p)) {
+    stumble();
+    toast('CLIPPED BY TRAFFIC', 1.2);
   }
   if (playing && members.length < 28) {
     const rec = city.tryRecruit(player.p, 7.5);
@@ -442,6 +484,7 @@ function updatePlayer(dt) {
       toast(`${venueName(night + 1)} — NIGHT ${night + 1} COMPLETE`, 3.0);
       night++;
       city.night = night;
+      scene.environment = envFor(night);
       city.clearBeacon();
       dest = null;
       destCooldown = 1.6;
@@ -497,8 +540,8 @@ function updateTroupe(dt) {
     const row = Math.floor(i / 3) + 1;
     const lane = (i % 3) - 1;
     const brick = row % 2 ? 0.45 : -0.45;
-    let back = 4.5 + row * 4.0;
-    let side = (lane + brick) * 3.6 + Math.sin(elapsed * 0.9 + m.phase) * 0.9;
+    let back = 3.4 + row * 3.0;
+    let side = (lane + brick) * 3.4 + Math.sin(elapsed * 0.9 + m.phase) * 0.9;
 
     // project the slot onto skateable ground near the player's surface
     let slot = _t1;
@@ -557,8 +600,9 @@ function updateCamera(dt) {
   if (smoothF.lengthSq() < 1e-4) smoothF.copy(player.f);
   smoothF.normalize();
 
-  const h = 4.1 - player.tuck * 1.2;
-  _t1.copy(player.p).addScaledVector(smoothUp, h).addScaledVector(smoothF, -8.8);
+  const packPull = Math.min(7, members.length * 0.55);
+  const h = 4.1 - player.tuck * 1.2 + packPull * 0.22;
+  _t1.copy(player.p).addScaledVector(smoothUp, h).addScaledVector(smoothF, -(8.8 + packPull));
   _t2.copy(player.p).addScaledVector(smoothUp, 1.9).addScaledVector(smoothF, 10.5);
   camPos.lerp(_t1, 1 - Math.exp(-12 * dt));
   camLook.lerp(_t2, 1 - Math.exp(-15 * dt));
@@ -655,7 +699,7 @@ function step(dtOverride) {
   elapsed += dt;
 
   city.ensure(player.p);
-  city.update(dt, elapsed);
+  city.update(dt, elapsed, player.p);
   updatePlayer(dt);
   updateTroupe(dt);
   updateCamera(dt);
@@ -666,13 +710,15 @@ function step(dtOverride) {
   const atm = blendedAtmosphere(nightF);
   scene.fog.color.copy(atm.horizon);
   ambient.color.copy(atm.ambient);
-  dirLight.color.copy(atm.sun);
+  dirLight.color.copy(atm.key);
   dirLight.position.copy(player.p).add(LIGHT_OFF);
   dirLight.target.position.copy(player.p);
   fillLight.position.copy(player.p).add(FILL_OFF);
   fillLight.target.position.copy(player.p);
   fillLight.color.copy(atm.lamp);
   sky.update(dt, camera.position, player.p, atm);
+  mirror.position.x = player.p.x;
+  mirror.position.z = player.p.z;
 
   audio.setSpeed(player.v, !player.grounded);
 

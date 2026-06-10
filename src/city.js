@@ -1,136 +1,391 @@
-// city.js — an open city, generated in chunks around the skater.
-// Porcelain towers on wide plazas, rotating sky-platforms bridging roofs,
-// arch walls with window openings, lone skaters waiting to join your troupe,
-// and one glowing venue on the horizon: tonight's destination.
+// city.js — a neon-noir open city, generated in chunks around the skater.
+// Road grids with lane paint and sidewalks, dark glass towers full of lit
+// windows, modeled streetlights, neon signs and animated billboards, street
+// furniture, ground traffic, flying traffic, spinning sky-platforms — and
+// one golden venue on the horizon: tonight's destination.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { eraPalette } from './palettes.js';
 import { makeSkater } from './skaters.js';
 
 export const CHUNK = 96;
+const ROAD = 11;          // road width along west/south chunk edges
+const BLOCK0 = ROAD + 4;  // block (buildable) region inset
 
-function makeWindowTexture() {
+const RECRUIT_COLORS = [0x35e0c8, 0xffd166, 0xff7a5a, 0xc79bff, 0x9fffcf, 0xff4f6e, 0x8ad9ff, 0xffb6f2];
+const RECRUIT_NAMES = ['TINY', 'BENNIE', 'LEVON', 'NIKITA', 'DANIEL', 'ROCKET', 'PHILLY', 'AMY',
+  'JOHNNY', 'SUSIE', 'JACKIE', 'STARLIGHT', 'RAY', 'IDA', 'MONA', 'JETS'];
+const SIGN_WORDS = ['CLOSER', 'DISCO', 'SKATE', 'ホールド', '夜', 'NEON', 'クローサー', 'ALL NIGHT', '24H', 'ローラー'];
+
+function makeWindowTexture(neonHex) {
   const c = document.createElement('canvas');
-  c.width = 128; c.height = 128;
+  c.width = 256; c.height = 256;
   const g = c.getContext('2d');
-  g.fillStyle = '#000';
-  g.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 6; i++) {
-    for (let j = 0; j < 8; j++) {
-      if (Math.random() < 0.5) {
-        g.fillStyle = Math.random() < 0.78 ? '#ffd9a0' : '#bfe2ff';
-        g.globalAlpha = 0.5 + Math.random() * 0.5;
-        g.fillRect(10 + i * 19, 7 + j * 15, 8, 6);
-      }
+  g.fillStyle = '#06070c';
+  g.fillRect(0, 0, 256, 256);
+  const cols = 12, rows = 16;
+  const cw = 256 / cols, rh = 256 / rows;
+  for (let j = 0; j < rows; j++) {
+    const office = Math.random() < 0.14;     // a whole floor working late
+    for (let i = 0; i < cols; i++) {
+      const lit = office ? Math.random() < 0.85 : Math.random() < 0.30;
+      if (!lit) continue;
+      const r = Math.random();
+      g.fillStyle = r < 0.6 ? '#ffd9a0' : r < 0.85 ? '#bfe2ff' : neonHex;
+      g.globalAlpha = 0.45 + Math.random() * 0.55;
+      g.fillRect(i * cw + 2.5, j * rh + 3, cw - 5, rh - 7);
     }
   }
+  g.globalAlpha = 1;
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
 
-const RECRUIT_COLORS = [0x35e0c8, 0xffd166, 0xff7a5a, 0xc79bff, 0x9fffcf, 0xff4f6e, 0x8ad9ff, 0xffb6f2];
-const RECRUIT_NAMES = ['TINY', 'BENNIE', 'LEVON', 'NIKITA', 'DANIEL', 'ROCKET', 'PHILLY', 'AMY',
-  'JOHNNY', 'SUSIE', 'JACKIE', 'STARLIGHT', 'RAY', 'IDA', 'MONA', 'JETS'];
+function makeSignTexture(word, colorHex) {
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = '#0a0a12';
+  g.fillRect(0, 0, 64, 256);
+  g.fillStyle = colorHex;
+  g.shadowColor = colorHex;
+  g.shadowBlur = 14;
+  g.font = 'bold 38px "Courier New", monospace';
+  g.textAlign = 'center';
+  const chars = word.split('');
+  const step = Math.min(44, 236 / chars.length);
+  chars.forEach((ch, i) => g.fillText(ch, 32, 42 + i * step));
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeBillboardTexture(word, fg, bg) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, 256, 128);
+  g.fillStyle = fg;
+  g.shadowColor = fg;
+  g.shadowBlur = 18;
+  g.font = 'bold 54px "Courier New", monospace';
+  g.textAlign = 'center';
+  g.fillText(word, 128, 82);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeGlowSprite() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.25)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 export class City {
   constructor(scene) {
     this.scene = scene;
-    this.windowTex = makeWindowTexture();
     this.matCache = new Map();
-    this.chunks = new Map();      // "cx,cz" -> chunk
-    this.rotors = [];             // {box, mesh, w}
-    this.recruits = [];           // {p, name, color, rig, phase, chunk}
+    this.texCache = new Map();
+    this.glowTex = makeGlowSprite();
+    this.chunks = new Map();
+    this.rotors = [];
+    this.recruits = [];
     this.windows = [];
+    this.cars = [];
+    this.billboards = [];
+    this.blinkers = [];
     this.night = 0;
     this.recruitCounter = 0;
     this.beacon = null;
     this._boxCache = { key: '', boxes: [] };
-    this._q = new THREE.Quaternion();
     this._m = new THREE.Matrix4();
+
+    // flying traffic, ambient
+    this.flyers = [];
+    for (let i = 0; i < 8; i++) {
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.5, 4.2),
+        new THREE.MeshStandardMaterial({ color: 0x14161e, roughness: 0.3, metalness: 0.7 }));
+      g.add(body);
+      const lt = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.12, 0.3),
+        new THREE.MeshBasicMaterial({ color: i % 2 ? 0xff4060 : 0xfff2d0 }));
+      lt.position.set(0, 0, i % 2 ? 2.0 : -2.0);
+      g.add(lt);
+      const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.glowTex, color: i % 2 ? 0xff4060 : 0x9fd8ff,
+        transparent: true, opacity: 0.7, depthWrite: false,
+      }));
+      spr.scale.setScalar(3.2);
+      g.add(spr);
+      scene.add(g);
+      const ang = Math.random() * Math.PI * 2;
+      this.flyers.push({
+        group: g, y: 36 + Math.random() * 38,
+        dir: new THREE.Vector3(Math.sin(ang), 0, Math.cos(ang)),
+        speed: 16 + Math.random() * 16,
+        p: new THREE.Vector3((Math.random() - 0.5) * 400, 0, (Math.random() - 0.5) * 400),
+      });
+    }
   }
 
   mats(night) {
     const key = ((night % 5) + 5) % 5;
     if (!this.matCache.has(key)) {
       const p = eraPalette(key);
+      const trimHex = '#' + new THREE.Color(p.trim).getHexString();
+      const winTex = [makeWindowTexture(trimHex), makeWindowTexture(trimHex), makeWindowTexture(trimHex)];
       this.matCache.set(key, {
         palette: p,
-        building: new THREE.MeshStandardMaterial({ color: p.building, roughness: 0.93, metalness: 0 }),
-        buildingWin: new THREE.MeshStandardMaterial({
-          color: p.building, roughness: 0.93, metalness: 0,
-          emissive: 0xffffff, emissiveMap: this.windowTex, emissiveIntensity: 0.5,
-        }),
-        street: new THREE.MeshStandardMaterial({ color: p.street, roughness: 0.96, metalness: 0 }),
-        edge: new THREE.LineBasicMaterial({ color: p.trim, transparent: true, opacity: 0.5 }),
-        edgeSoft: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16 }),
-        rotor: new THREE.MeshStandardMaterial({ color: p.building, roughness: 0.85, metalness: 0,
-          emissive: p.trim, emissiveIntensity: 0.08 }),
-        cone: new THREE.MeshBasicMaterial({
-          color: p.lamp, transparent: true, opacity: 0.07,
-          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-        }),
-        pool: new THREE.MeshBasicMaterial({
-          color: p.lamp, transparent: true, opacity: 0.10,
-          blending: THREE.AdditiveBlending, depthWrite: false,
-        }),
+        winTex,
+        concrete: new THREE.MeshStandardMaterial({ color: p.building, roughness: 0.85, metalness: 0.05 }),
+        asphalt: new THREE.MeshStandardMaterial({ color: p.street, roughness: 0.9, metalness: 0.1 }),
+        sidewalk: new THREE.MeshStandardMaterial({
+          color: new THREE.Color(p.street).lerp(new THREE.Color(0xffffff), 0.13), roughness: 0.95 }),
+        lanePaint: new THREE.MeshBasicMaterial({ color: 0xcfd2da, transparent: true, opacity: 0.5 }),
+        laneNeon: new THREE.MeshBasicMaterial({
+          color: p.trim, transparent: true, opacity: 0.5,
+          blending: THREE.AdditiveBlending, depthWrite: false }),
+        edge: new THREE.LineBasicMaterial({ color: p.trim, transparent: true, opacity: 0.35 }),
+        edgeSoft: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.08 }),
+        metal: new THREE.MeshStandardMaterial({ color: 0x1c1f28, roughness: 0.35, metalness: 0.8 }),
         lampHead: new THREE.MeshBasicMaterial({ color: p.lamp }),
-        pole: new THREE.MeshStandardMaterial({ color: 0x2a2a38, roughness: 0.8 }),
+        pool: new THREE.MeshBasicMaterial({
+          color: p.lamp, transparent: true, opacity: 0.13,
+          blending: THREE.AdditiveBlending, depthWrite: false }),
+        cone: new THREE.MeshBasicMaterial({
+          color: p.lamp, transparent: true, opacity: 0.045,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
+        rotor: new THREE.MeshStandardMaterial({
+          color: p.building, roughness: 0.4, metalness: 0.5,
+          emissive: p.trim, emissiveIntensity: 0.12 }),
         beam: new THREE.MeshBasicMaterial({
-          color: 0xffe9b0, transparent: true, opacity: 0.34,
-          blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide,
-        }),
+          color: 0xffe9b0, transparent: true, opacity: 0.3,
+          blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide }),
         gold: new THREE.MeshStandardMaterial({
-          color: 0xf6dfb2, roughness: 0.55, metalness: 0.15,
-          emissive: 0xffc46a, emissiveIntensity: 0.55,
-        }),
+          color: 0xf6dfb2, roughness: 0.45, metalness: 0.3,
+          emissive: 0xffc46a, emissiveIntensity: 0.6 }),
+        vendFront: new THREE.MeshBasicMaterial({ color: p.neon2 }),
+        hydrant: new THREE.MeshStandardMaterial({ color: 0xb03038, roughness: 0.6 }),
       });
     }
     return this.matCache.get(key);
   }
 
-  // -------------------------------------------------------------- helpers
-  box(chunk, M, min, max, { windows = false, edges = true, trim = false, mat = null } = {}) {
-    const size = new THREE.Vector3().subVectors(max, min);
-    const mid = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
-    const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
-    let useMat = mat ?? M.building;
-    if (windows) {
-      useMat = M.buildingWin.clone();
-      useMat.emissiveMap = this.windowTex.clone();
-      useMat.emissiveMap.repeat.set(Math.max(1, Math.round(size.x / 7)), Math.max(1, Math.round(size.y / 7)));
-    }
-    const mesh = new THREE.Mesh(geo, useMat);
-    mesh.position.copy(mid);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    chunk.group.add(mesh);
-    if (edges) {
-      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), trim ? M.edge : M.edgeSoft);
-      line.position.copy(mid);
-      chunk.group.add(line);
-    }
-    const rec = { min: min.clone(), max: max.clone() };
-    chunk.boxes.push(rec);
-    return rec;
+  glassMat(M, variant) {
+    const p = M.palette;
+    const m = new THREE.MeshStandardMaterial({
+      color: p.glass, roughness: 0.16, metalness: 0.85,
+      emissive: 0xffffff, emissiveMap: M.winTex[variant % 3].clone(),
+      emissiveIntensity: 0.95, envMapIntensity: 1.3,
+    });
+    return m;
+  }
+  concreteWinMat(M, variant) {
+    const m = new THREE.MeshStandardMaterial({
+      color: M.palette.building, roughness: 0.8, metalness: 0.05,
+      emissive: 0xffffff, emissiveMap: M.winTex[variant % 3].clone(),
+      emissiveIntensity: 0.6,
+    });
+    return m;
   }
 
-  lamp(chunk, M, x, z) {
-    const g = chunk.group;
-    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.22, 8.6, 0.22), M.pole);
-    pole.position.set(x, 4.3, z);
-    pole.castShadow = true;
+  // -------------------------------------------------------------- builders
+  collider(chunk, min, max) {
+    chunk.boxes.push({ min: min.clone(), max: max.clone() });
+  }
+
+  tower(chunk, M, x, z, w, d, h, rng) {
+    const variant = Math.floor(rng() * 3);
+    const isGlass = rng() < 0.6;
+    const mat = isGlass ? this.glassMat(M, variant) : this.concreteWinMat(M, variant);
+    mat.emissiveMap.repeat.set(Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(h / 9)));
+    // podium base on some towers
+    let baseH = 0;
+    if (rng() < 0.35 && h > 18) {
+      baseH = 4.5;
+      const pw = w * 1.25, pd = d * 1.25;
+      const pgeo = new THREE.BoxGeometry(pw, baseH, pd);
+      const pod = new THREE.Mesh(pgeo, M.concrete);
+      pod.position.set(x + w / 2, baseH / 2, z + d / 2);
+      pod.castShadow = pod.receiveShadow = true;
+      chunk.group.add(pod);
+      this.collider(chunk,
+        new THREE.Vector3(x + w / 2 - pw / 2, 0, z + d / 2 - pd / 2),
+        new THREE.Vector3(x + w / 2 + pw / 2, baseH, z + d / 2 + pd / 2));
+    }
+    const geo = new THREE.BoxGeometry(w, h, d);
+    const roof = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(M.palette.building).multiplyScalar(0.8), roughness: 0.9 });
+    const mesh = new THREE.Mesh(geo, [mat, mat, roof, roof, mat, mat]);
+    mesh.position.set(x + w / 2, baseH + h / 2, z + d / 2);
+    mesh.castShadow = mesh.receiveShadow = true;
+    chunk.group.add(mesh);
+    const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), rng() < 0.4 ? M.edge : M.edgeSoft);
+    line.position.copy(mesh.position);
+    chunk.group.add(line);
+    this.collider(chunk,
+      new THREE.Vector3(x, baseH, z), new THREE.Vector3(x + w, baseH + h, z + d));
+
+    const top = baseH + h;
+    // rooftop gear: antennas, dish, vents, blinking beacon
+    if (rng() < 0.85) {
+      const ax = x + 2 + rng() * (w - 4), az = z + 2 + rng() * (d - 4);
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.1, 5 + rng() * 5, 6), M.metal);
+      ant.position.set(ax, top + ant.geometry.parameters.height / 2, az);
+      chunk.group.add(ant);
+      const blink = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff3048 }));
+      blink.position.set(ax, top + ant.geometry.parameters.height + 0.2, az);
+      chunk.group.add(blink);
+      this.blinkers.push({ mesh: blink, phase: rng() * 6, chunk });
+    }
+    if (rng() < 0.5) {
+      const vx = x + 2 + rng() * (w - 5), vz = z + 2 + rng() * (d - 5);
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 2.2), M.metal);
+      vent.position.set(vx, top + 0.6, vz);
+      vent.castShadow = true;
+      chunk.group.add(vent);
+      this.collider(chunk,
+        new THREE.Vector3(vx - 1.1, top, vz - 1.1), new THREE.Vector3(vx + 1.1, top + 1.2, vz + 1.1));
+    }
+    if (rng() < 0.4) {
+      const dish = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.metal);
+      dish.rotation.x = Math.PI * 0.65;
+      dish.position.set(x + w - 2.5, top + 0.8, z + 2.5);
+      chunk.group.add(dish);
+    }
+
+    // vertical neon sign near the base
+    if (rng() < 0.45) {
+      const word = SIGN_WORDS[Math.floor(rng() * SIGN_WORDS.length)];
+      const colHex = '#' + new THREE.Color(rng() < 0.5 ? M.palette.trim : M.palette.neon2).getHexString();
+      const tex = makeSignTexture(word, colHex);
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(1.6, 7, 0.4),
+        new THREE.MeshBasicMaterial({ map: tex }));
+      const side = rng() < 0.5;
+      sign.position.set(
+        side ? x - 0.9 : x + w / 2 + (rng() - 0.5) * w * 0.5,
+        baseH + 5.5,
+        side ? z + d / 2 + (rng() - 0.5) * d * 0.5 : z - 0.9);
+      chunk.group.add(sign);
+    }
+    // animated billboard up the facade
+    if (rng() < 0.3 && h > 20) {
+      const word = SIGN_WORDS[Math.floor(rng() * SIGN_WORDS.length)];
+      const fg = '#' + new THREE.Color(M.palette.sign).getHexString();
+      const tex = makeBillboardTexture(word, fg, '#0c0c16');
+      const bb = new THREE.Mesh(new THREE.PlaneGeometry(9, 4.5),
+        new THREE.MeshBasicMaterial({ map: tex }));
+      bb.position.set(x + w / 2, baseH + h * (0.55 + rng() * 0.25), z - 0.12);
+      bb.rotation.y = Math.PI;
+      chunk.group.add(bb);
+      this.billboards.push({ mesh: bb, tex, speed: 0.04 + rng() * 0.08, phase: rng() * 9, chunk });
+    }
+  }
+
+  streetlight(chunk, M, x, z, faceX) {
+    // pole + curved arm + head, light pooled on the road
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 7.4, 8), M.metal);
+    pole.position.y = 3.7;
     g.add(pole);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.45, 10, 8), M.lampHead);
-    head.position.set(x, 8.7, z);
+    const arm = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.06, 6, 12, Math.PI / 2), M.metal);
+    arm.position.set(0, 7.4 - 1.5, 0);
+    arm.rotation.z = 0;
+    g.add(arm);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.16, 0.34), M.metal);
+    head.position.set(1.5, 7.4, 0);
     g.add(head);
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(3.4, 8.8, 18, 1, true), M.cone);
-    cone.position.set(x, 4.3, z);
-    g.add(cone);
-    const pool = new THREE.Mesh(new THREE.CircleGeometry(3.1, 20), M.pool);
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.05, 0.26), M.lampHead);
+    panel.position.set(1.5, 7.3, 0);
+    g.add(panel);
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.glowTex, color: M.palette.lamp, transparent: true, opacity: 0.55, depthWrite: false }));
+    spr.scale.setScalar(2.6);
+    spr.position.set(1.5, 7.25, 0);
+    g.add(spr);
+    const pool = new THREE.Mesh(new THREE.CircleGeometry(3.4, 20), M.pool);
     pool.rotation.x = -Math.PI / 2;
-    pool.position.set(x, 0.06, z);
+    pool.position.set(1.5, 0.07, 0);
     g.add(pool);
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(3.2, 7.2, 16, 1, true), M.cone);
+    cone.position.set(1.5, 3.6, 0);
+    g.add(cone);
+    g.position.set(x, 0, z);
+    if (faceX !== undefined) g.rotation.y = faceX;
+    chunk.group.add(g);
+  }
+
+  vending(chunk, M, x, z, rot) {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.9, 0.8), M.metal);
+    body.position.set(x, 0.95, z);
+    body.rotation.y = rot;
+    body.castShadow = true;
+    chunk.group.add(body);
+    const front = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.6), M.vendFront);
+    front.position.set(x + Math.sin(rot) * 0.41, 1.0, z + Math.cos(rot) * 0.41);
+    front.rotation.y = rot;
+    chunk.group.add(front);
+    this.collider(chunk,
+      new THREE.Vector3(x - 0.6, 0, z - 0.6), new THREE.Vector3(x + 0.6, 1.9, z + 0.6));
+  }
+
+  makeCar(M, rng) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.52, 4.3),
+      new THREE.MeshStandardMaterial({ color: 0x171a22, roughness: 0.25, metalness: 0.8, envMapIntensity: 1.2 }));
+    body.position.y = 0.55;
+    body.castShadow = true;
+    g.add(body);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.42, 2.0),
+      new THREE.MeshStandardMaterial({ color: 0x0c0e16, roughness: 0.1, metalness: 0.9, envMapIntensity: 1.4 }));
+    cab.position.set(0, 0.95, -0.2);
+    g.add(cab);
+    for (const sx of [-0.85, 0.85]) {
+      for (const sz of [-1.4, 1.4]) {
+        const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.24, 10), M.metal);
+        wh.rotation.z = Math.PI / 2;
+        wh.position.set(sx, 0.34, sz);
+        g.add(wh);
+      }
+    }
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.1, 0.06),
+      new THREE.MeshBasicMaterial({ color: 0xfff4d8 }));
+    head.position.set(0, 0.6, 2.16);
+    g.add(head);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.09, 0.06),
+      new THREE.MeshBasicMaterial({ color: 0xff2a4a }));
+    tail.position.set(0, 0.62, -2.16);
+    g.add(tail);
+    const hs = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: this.glowTex, color: 0xfff4d8, transparent: true, opacity: 0.6, depthWrite: false }));
+    hs.scale.setScalar(2.4);
+    hs.position.set(0, 0.6, 2.5);
+    g.add(hs);
+    if (rng() < 0.5) {
+      const under = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 4.4),
+        new THREE.MeshBasicMaterial({
+          color: rng() < 0.5 ? M.palette.trim : M.palette.neon2,
+          transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+      under.rotation.x = -Math.PI / 2;
+      under.position.y = 0.12;
+      g.add(under);
+    }
+    return g;
   }
 
   // -------------------------------------------------------------- chunks
@@ -154,58 +409,102 @@ export class City {
 
   buildChunk(cx, cz) {
     const M = this.mats(this.night);
-    const chunk = { group: new THREE.Group(), boxes: [], cx, cz, rotors: [], recruits: [], windows: [] };
+    const chunk = {
+      group: new THREE.Group(), boxes: [], cx, cz,
+      rotors: [], recruits: [], windows: [], cars: [], billboards: [], blinkers: [],
+    };
     const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663)) >>> 0);
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
 
-    // plaza floor
-    this.box(chunk, M,
-      new THREE.Vector3(x0 - 0.3, -6, z0 - 0.3),
-      new THREE.Vector3(x0 + CHUNK + 0.3, 0, z0 + CHUNK + 0.3),
-      { edges: false, mat: M.street });
-
-    // towers (non-overlapping footprints with street gaps)
-    const towers = [];
-    const tries = 7;
-    for (let i = 0; i < tries && towers.length < 4; i++) {
-      const w = 11 + rng() * 12, d = 11 + rng() * 12;
-      const tx = x0 + 8 + rng() * (CHUNK - 16 - w);
-      const tz = z0 + 8 + rng() * (CHUNK - 16 - d);
-      let ok = true;
-      for (const t of towers) {
-        if (tx < t.x + t.w + 8 && tx + w + 8 > t.x && tz < t.z + t.d + 8 && tz + d + 8 > t.z) { ok = false; break; }
-      }
-      if (!ok) continue;
-      const h = 8 + Math.pow(rng(), 1.6) * 32;
-      towers.push({ x: tx, z: tz, w, d, h });
-      this.box(chunk, M,
-        new THREE.Vector3(tx, 0, tz), new THREE.Vector3(tx + w, h, tz + d),
-        { windows: true, trim: rng() < 0.45 });
-      // rooftop props
-      if (rng() < 0.6) {
-        const px = tx + 2 + rng() * (w - 5), pz = tz + 2 + rng() * (d - 5);
-        this.box(chunk, M, new THREE.Vector3(px, h, pz), new THREE.Vector3(px + 2.2, h + 1.3, pz + 2.2));
-      }
+    // ground: one asphalt slab (roads + block base)
+    {
+      const geo = new THREE.BoxGeometry(CHUNK + 0.6, 6, CHUNK + 0.6);
+      const mesh = new THREE.Mesh(geo, M.asphalt);
+      mesh.position.set(x0 + CHUNK / 2, -3, z0 + CHUNK / 2);
+      mesh.receiveShadow = true;
+      chunk.group.add(mesh);
+      this.collider(chunk,
+        new THREE.Vector3(x0 - 0.3, -6, z0 - 0.3),
+        new THREE.Vector3(x0 + CHUNK + 0.3, 0, z0 + CHUNK + 0.3));
     }
 
-    // rotating platform bridging two towers
+    // sidewalk ring around the block + lane paint on the two roads (merged meshes)
+    {
+      const sw = [];
+      const b0 = BLOCK0 - 3.6;
+      const plate = (x, z, w, d) => {
+        const g = new THREE.BoxGeometry(w, 0.14, d);
+        g.translate(x + w / 2, 0.07, z + d / 2);
+        sw.push(g);
+      };
+      plate(x0 + b0, z0 + b0, CHUNK - b0 - 1, 3.6);
+      plate(x0 + b0, z0 + CHUNK - 1, CHUNK - b0 - 1, 1);
+      plate(x0 + b0, z0 + b0 + 3.6, 3.6, CHUNK - b0 - 4.6);
+      plate(x0 + CHUNK - 1, z0 + b0 + 3.6, 1, CHUNK - b0 - 4.6);
+      const swMesh = new THREE.Mesh(mergeGeometries(sw), M.sidewalk);
+      swMesh.receiveShadow = true;
+      chunk.group.add(swMesh);
+      sw.forEach(g => g.dispose());
+
+      const dashes = [];
+      for (let t = 4; t < CHUNK - 2; t += 7) {
+        const g1 = new THREE.BoxGeometry(0.22, 0.02, 2.6);
+        g1.translate(x0 + ROAD / 2, 0.055, z0 + t);
+        dashes.push(g1);
+        const g2 = new THREE.BoxGeometry(2.6, 0.02, 0.22);
+        g2.translate(x0 + t, 0.055, z0 + ROAD / 2);
+        dashes.push(g2);
+      }
+      const dashMesh = new THREE.Mesh(mergeGeometries(dashes), M.lanePaint);
+      chunk.group.add(dashMesh);
+      dashes.forEach(g => g.dispose());
+
+      // neon curb strips along the block edge — guides the eye, very cyberpunk
+      const neon = [];
+      const n1 = new THREE.BoxGeometry(CHUNK - b0, 0.03, 0.14);
+      n1.translate(x0 + b0 + (CHUNK - b0) / 2, 0.085, z0 + b0);
+      neon.push(n1);
+      const n2 = new THREE.BoxGeometry(0.14, 0.03, CHUNK - b0);
+      n2.translate(x0 + b0, 0.085, z0 + b0 + (CHUNK - b0) / 2);
+      neon.push(n2);
+      const neonMesh = new THREE.Mesh(mergeGeometries(neon), M.laneNeon);
+      chunk.group.add(neonMesh);
+      neon.forEach(g => g.dispose());
+    }
+
+    // towers in the block
+    const towers = [];
+    for (let i = 0; i < 8 && towers.length < 4; i++) {
+      const w = 12 + rng() * 14, d = 12 + rng() * 14;
+      const tx = x0 + BLOCK0 + 2 + rng() * (CHUNK - BLOCK0 - w - 6);
+      const tz = z0 + BLOCK0 + 2 + rng() * (CHUNK - BLOCK0 - d - 6);
+      let ok = true;
+      for (const t of towers) {
+        if (tx < t.x + t.w + 7 && tx + w + 7 > t.x && tz < t.z + t.d + 7 && tz + d + 7 > t.z) { ok = false; break; }
+      }
+      if (!ok) continue;
+      const h = 12 + Math.pow(rng(), 1.5) * 34;
+      towers.push({ x: tx, z: tz, w, d, h });
+      this.tower(chunk, M, tx, tz, w, d, h, rng);
+    }
+
+    // spinning platform between two roofs
     if (towers.length >= 2 && rng() < 0.5) {
       const t1 = towers[0], t2 = towers[1];
       const cxr = (t1.x + t1.w / 2 + t2.x + t2.w / 2) / 2;
       const czr = (t1.z + t1.d / 2 + t2.z + t2.d / 2) / 2;
-      const topY = Math.max(7, Math.min(t1.h, t2.h) - rng() * 3);
+      const topY = Math.max(9, Math.min(t1.h, t2.h) - rng() * 3);
       const hw = 8 + rng() * 5, hd = 2.4 + rng() * 1.2;
       const w = (rng() < 0.5 ? -1 : 1) * (0.12 + rng() * 0.18);
-      const geo = new THREE.BoxGeometry(hw * 2, 1.2, hd * 2);
+      const geo = new THREE.BoxGeometry(hw * 2, 1.1, hd * 2);
       const mesh = new THREE.Mesh(geo, M.rotor);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.position.set(cxr, topY - 0.6, czr);
+      mesh.castShadow = mesh.receiveShadow = true;
+      mesh.position.set(cxr, topY - 0.55, czr);
       const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
       mesh.add(line);
       chunk.group.add(mesh);
       const boxRec = {
-        min: new THREE.Vector3(-hw, topY - 1.2, -hd),
+        min: new THREE.Vector3(-hw, topY - 1.1, -hd),
         max: new THREE.Vector3(hw, topY, hd),
         rot: { cx: cxr, cz: czr, yaw: rng() * Math.PI, w },
       };
@@ -215,26 +514,95 @@ export class City {
       this.rotors.push(rotor);
     }
 
-    // arch wall with window openings, somewhere on the plaza
-    if (rng() < 0.3) {
-      const wx = x0 + 14 + rng() * (CHUNK - 56);
-      const wz = z0 + 12 + rng() * (CHUNK - 28);
-      const W = 26;
-      this.box(chunk, M, new THREE.Vector3(wx, 0, wz), new THREE.Vector3(wx + 4, 7, wz + 3.4), { trim: true });
-      this.box(chunk, M, new THREE.Vector3(wx + 10, 0, wz), new THREE.Vector3(wx + 16, 7, wz + 3.4), { trim: true });
-      this.box(chunk, M, new THREE.Vector3(wx + 22, 0, wz), new THREE.Vector3(wx + W, 7, wz + 3.4), { trim: true });
-      this.box(chunk, M, new THREE.Vector3(wx, 7, wz), new THREE.Vector3(wx + W, 13, wz + 3.4), { windows: true, trim: true });
-      const recs = [
-        { zMin: wz - 0.6, zMax: wz + 4, xMin: wx + 4, xMax: wx + 10, yMin: 0, yMax: 7, taken: false },
-        { zMin: wz - 0.6, zMax: wz + 4, xMin: wx + 16, xMax: wx + 22, yMin: 0, yMax: 7, taken: false },
-      ];
-      for (const r of recs) { this.windows.push(r); chunk.windows.push(r); }
+    // power cable between two towers, with lanterns
+    if (towers.length >= 2 && rng() < 0.45) {
+      const t1 = towers[0], t2 = towers[1];
+      const a = new THREE.Vector3(t1.x + t1.w / 2, t1.h * 0.7, t1.z + t1.d / 2);
+      const b = new THREE.Vector3(t2.x + t2.w / 2, t2.h * 0.7, t2.z + t2.d / 2);
+      const mid = a.clone().lerp(b, 0.5);
+      mid.y = Math.min(a.y, b.y) * 0.8;
+      const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 14, 0.04, 5), M.metal);
+      chunk.group.add(tube);
+      for (const t of [0.3, 0.5, 0.7]) {
+        const lp = curve.getPoint(t);
+        const lan = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8),
+          new THREE.MeshBasicMaterial({ color: rng() < 0.5 ? M.palette.trim : M.palette.sign }));
+        lan.position.copy(lp).y -= 0.25;
+        chunk.group.add(lan);
+      }
     }
 
-    // lamps
-    const lampN = 2 + Math.floor(rng() * 2);
-    for (let i = 0; i < lampN; i++) {
-      this.lamp(chunk, M, x0 + 10 + rng() * (CHUNK - 20), z0 + 10 + rng() * (CHUNK - 20));
+    // street lights along both roads
+    for (let t = 16; t < CHUNK; t += 26) {
+      this.streetlight(chunk, M, x0 + ROAD + 1.2, z0 + t, Math.PI);       // west road, arm over road
+      this.streetlight(chunk, M, x0 + t, z0 + ROAD + 1.2, Math.PI / 2);   // south road
+    }
+
+    // street furniture on the sidewalk
+    const fx = x0 + BLOCK0 - 1.6, fz = z0 + BLOCK0 - 1.6;
+    if (rng() < 0.6) this.vending(chunk, M, fx + 6 + rng() * 30, fz, Math.PI);
+    if (rng() < 0.5) this.vending(chunk, M, fx, fz + 10 + rng() * 30, Math.PI / 2);
+    if (rng() < 0.6) {
+      // hydrant
+      const hx = fx + 16 + rng() * 40, hz = fz + 0.2;
+      const hyd = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.78, 10), M.hydrant);
+      hyd.position.set(hx, 0.39, hz);
+      hyd.castShadow = true;
+      chunk.group.add(hyd);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 8), M.hydrant);
+      cap.position.set(hx, 0.82, hz);
+      chunk.group.add(cap);
+      this.collider(chunk,
+        new THREE.Vector3(hx - 0.3, 0, hz - 0.3), new THREE.Vector3(hx + 0.3, 0.9, hz + 0.3));
+    }
+    if (rng() < 0.5) {
+      // bench
+      const bx = fx + 10 + rng() * 44, bz = fz + 0.4;
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.1, 0.6), M.metal);
+      seat.position.set(bx, 0.5, bz);
+      seat.castShadow = true;
+      chunk.group.add(seat);
+      for (const s of [-1, 1]) {
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.55), M.metal);
+        leg.position.set(bx + s * 1.0, 0.25, bz);
+        chunk.group.add(leg);
+      }
+      this.collider(chunk,
+        new THREE.Vector3(bx - 1.25, 0, bz - 0.35), new THREE.Vector3(bx + 1.25, 0.58, bz + 0.35));
+    }
+    // traffic light at the corner
+    {
+      const tx = x0 + ROAD + 0.8, tz = z0 + ROAD + 0.8;
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 5.4, 8), M.metal);
+      pole.position.set(tx, 2.7, tz);
+      chunk.group.add(pole);
+      const headBox = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.9, 0.3), M.metal);
+      headBox.position.set(tx, 5.0, tz);
+      chunk.group.add(headBox);
+      const lightCol = [0xff3048, 0xffb838, 0x2ee06a][Math.floor(rng() * 3)];
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8),
+        new THREE.MeshBasicMaterial({ color: lightCol }));
+      lamp.position.set(tx, 5.0 + (lightCol === 0xff3048 ? 0.28 : lightCol === 0xffb838 ? 0 : -0.28), tz + 0.16);
+      chunk.group.add(lamp);
+    }
+
+    // cars on this chunk's roads
+    const carN = rng() < 0.75 ? 1 + Math.floor(rng() * 2) : 0;
+    for (let i = 0; i < carN; i++) {
+      const axis = rng() < 0.5 ? 'x' : 'z';
+      const dir = rng() < 0.5 ? 1 : -1;
+      const lane = dir * 2.4;
+      const group = this.makeCar(M, rng);
+      chunk.group.add(group);
+      const car = {
+        group, axis, dir, chunk,
+        speed: 8 + rng() * 8,
+        t: rng() * CHUNK,
+        x0, z0, lane,
+      };
+      chunk.cars.push(car);
+      this.cars.push(car);
     }
 
     // a lone skater waiting for a troupe
@@ -247,9 +615,9 @@ export class City {
         const t = towers[Math.floor(rng() * towers.length)];
         pos = new THREE.Vector3(t.x + t.w / 2, t.h, t.z + t.d / 2);
       } else {
-        pos = new THREE.Vector3(x0 + 16 + rng() * (CHUNK - 32), 0, z0 + 16 + rng() * (CHUNK - 32));
+        pos = new THREE.Vector3(x0 + BLOCK0 + 6 + rng() * 40, 0, z0 + BLOCK0 + 6 + rng() * 40);
       }
-      const rig = makeSkater({ outfit: color, dress: rng() < 0.7 });
+      const rig = makeSkater({ outfit: color, dress: rng() < 0.4 });
       this.scene.add(rig.root);
       const rec = { p: pos, name, color, rig, phase: rng() * Math.PI * 2, chunk };
       chunk.recruits.push(rec);
@@ -263,6 +631,9 @@ export class City {
   disposeChunk(ch) {
     this.rotors = this.rotors.filter(r => !ch.rotors.includes(r));
     this.windows = this.windows.filter(w => !ch.windows.includes(w));
+    this.cars = this.cars.filter(c => c.chunk !== ch);
+    this.billboards = this.billboards.filter(b => b.chunk !== ch);
+    this.blinkers = this.blinkers.filter(b => b.chunk !== ch);
     for (const rec of ch.recruits) {
       this.scene.remove(rec.rig.root);
       rec.rig.root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
@@ -270,9 +641,13 @@ export class City {
     this.recruits = this.recruits.filter(r => !ch.recruits.includes(r));
     ch.group.traverse(o => {
       if (o.geometry) o.geometry.dispose();
-      if (o.material && o.material.emissiveMap && o.material.emissiveMap !== this.windowTex) {
-        o.material.emissiveMap.dispose();
-        o.material.dispose();
+      const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+      for (const m of mats) {
+        if (m.emissiveMap) {
+          m.emissiveMap.dispose();
+          m.dispose();
+        }
+        if (m.map && m.map !== this.glowTex) m.map.dispose();
       }
     });
     this.scene.remove(ch.group);
@@ -313,15 +688,15 @@ export class City {
     return null;
   }
 
-  tryWindow(p, prevP) {
-    for (const w of this.windows) {
-      if (w.taken) continue;
-      const inX = p.x > w.xMin && p.x < w.xMax;
-      const crossed = (prevP.z <= w.zMin && p.z > w.zMin) || (prevP.z >= w.zMax && p.z < w.zMax);
-      if (crossed && inX && p.y < w.yMax) {
-        w.taken = true;
-        return w;
-      }
+  tryWindow() { return null; }   // arch bonuses retired in the open city
+
+  carHit(p) {
+    for (const c of this.cars) {
+      const g = c.group.position;
+      if (Math.abs(p.y - g.y) > 2.2) continue;
+      const dx = p.x - g.x, dz = p.z - g.z;
+      const [hw, hd] = c.axis === 'z' ? [1.3, 2.6] : [2.6, 1.3];
+      if (Math.abs(dx) < hw && Math.abs(dz) < hd) return c;
     }
     return null;
   }
@@ -331,13 +706,11 @@ export class City {
     const M = this.mats(night);
     const group = new THREE.Group();
     const boxes = [];
-    const T = 9;   // half-size of the venue tower
-    const H = 42;
+    const T = 9, H = 42;
     const geo = new THREE.BoxGeometry(T * 2, H, T * 2);
     const tower = new THREE.Mesh(geo, M.gold);
     tower.position.set(pos.x, H / 2, pos.z);
-    tower.castShadow = true;
-    tower.receiveShadow = true;
+    tower.castShadow = tower.receiveShadow = true;
     group.add(tower);
     const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
     line.position.copy(tower.position);
@@ -346,7 +719,6 @@ export class City {
       min: new THREE.Vector3(pos.x - T, 0, pos.z - T),
       max: new THREE.Vector3(pos.x + T, H, pos.z + T),
     });
-    // marquee steps at the base
     const step = new THREE.Mesh(new THREE.BoxGeometry(T * 2 + 8, 2.2, T * 2 + 8), M.gold);
     step.position.set(pos.x, 1.1, pos.z);
     step.receiveShadow = true;
@@ -355,7 +727,6 @@ export class City {
       min: new THREE.Vector3(pos.x - T - 4, 0, pos.z - T - 4),
       max: new THREE.Vector3(pos.x + T + 4, 2.2, pos.z + T + 4),
     });
-    // the light you follow
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 2.2, 520, 16, 1, true), M.beam);
     beam.position.set(pos.x, 260, pos.z);
     group.add(beam);
@@ -375,27 +746,50 @@ export class City {
     this.beacon = null;
   }
 
-  update(dt, t) {
+  update(dt, t, playerP) {
     for (const r of this.rotors) {
       r.box.rot.yaw += r.box.rot.w * dt;
       r.mesh.rotation.y = r.box.rot.yaw;
     }
     if (this.beacon) {
       this.beacon.halo.rotation.z += dt * 0.4;
-      this.beacon.beam.material.opacity = 0.3 + Math.sin(t * 1.7) * 0.07;
+      this.beacon.beam.material.opacity = 0.27 + Math.sin(t * 1.7) * 0.06;
     }
-    // idle recruits skate lazy little circles
     for (const rec of this.recruits) {
       const a = t * 0.9 + rec.phase;
-      const px = rec.p.x + Math.cos(a) * 2.4;
-      const pz = rec.p.z + Math.sin(a) * 2.4;
-      rec.rig.root.position.set(px, rec.p.y, pz);
+      rec.rig.root.position.set(rec.p.x + Math.cos(a) * 2.4, rec.p.y, rec.p.z + Math.sin(a) * 2.4);
       this._m.makeBasis(
         new THREE.Vector3(Math.cos(a), 0, Math.sin(a)),
         new THREE.Vector3(0, 1, 0),
         new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)));
       rec.rig.root.quaternion.setFromRotationMatrix(this._m);
       rec.rig.animate(t + rec.phase, 7, 0.3);
+    }
+    for (const c of this.cars) {
+      c.t = (c.t + c.speed * dt * c.dir + CHUNK) % CHUNK;
+      if (c.axis === 'z') {
+        c.group.position.set(c.x0 + ROAD / 2 + c.lane, 0, c.z0 + c.t);
+        c.group.rotation.y = c.dir > 0 ? 0 : Math.PI;
+      } else {
+        c.group.position.set(c.x0 + c.t, 0, c.z0 + ROAD / 2 + c.lane);
+        c.group.rotation.y = c.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      }
+    }
+    for (const f of this.flyers) {
+      f.p.addScaledVector(f.dir, f.speed * dt);
+      if (f.p.x < playerP.x - 300) f.p.x += 600;
+      if (f.p.x > playerP.x + 300) f.p.x -= 600;
+      if (f.p.z < playerP.z - 300) f.p.z += 600;
+      if (f.p.z > playerP.z + 300) f.p.z -= 600;
+      f.group.position.set(f.p.x, f.y, f.p.z);
+      f.group.rotation.y = Math.atan2(f.dir.x, f.dir.z);
+    }
+    for (const b of this.billboards) {
+      b.tex.offset.x = (t * b.speed) % 1;
+      b.mesh.visible = Math.sin(t * 7 + b.phase) > -0.97;  // rare flicker
+    }
+    for (const b of this.blinkers) {
+      b.mesh.visible = Math.sin(t * 2.2 + b.phase) > 0;
     }
   }
 }
