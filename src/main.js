@@ -33,7 +33,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x551b38, 26, 240);
+scene.fog = new THREE.Fog(0x551b38, 26, 310);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1600);
 
@@ -236,11 +236,16 @@ function updateToasts(dt) {
 
 // ---------------------------------------------------------------- input
 const keys = new Set();
+let spaceDown = false;
+let jumpQueued = false;
 window.addEventListener('keydown', (e) => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
   if (!playing && (e.key === ' ' || e.key === 'Enter')) { startGame(); return; }
   keys.add(e.key.toLowerCase());
-  if (e.key === ' ') keys.add('space');
+  if (e.key === ' ') {
+    if (!e.repeat) jumpQueued = true;
+    spaceDown = true;
+  }
   if (e.key.toLowerCase() === 'm') {
     muted = !muted;
     audio.setMuted(muted);
@@ -253,7 +258,7 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => {
   keys.delete(e.key.toLowerCase());
-  if (e.key === ' ') keys.delete('space');
+  if (e.key === ' ') spaceDown = false;
 });
 const touches = new Map();
 window.addEventListener('pointerdown', (e) => {
@@ -262,12 +267,12 @@ window.addEventListener('pointerdown', (e) => {
   const fy = e.clientY / window.innerHeight;
   const zone = fy > 0.72 ? 'push' : fx < 0.35 ? 'left' : fx > 0.65 ? 'right' : 'mid';
   touches.set(e.pointerId, zone);
-  if (zone === 'mid') keys.add('space');
+  if (zone === 'mid') { jumpQueued = true; spaceDown = true; }
 });
 window.addEventListener('pointerup', (e) => {
   const zone = touches.get(e.pointerId);
   touches.delete(e.pointerId);
-  if (zone === 'mid') keys.delete('space');
+  if (zone === 'mid' && ![...touches.values()].includes('mid')) spaceDown = false;
 });
 
 function steerInput() {
@@ -375,11 +380,9 @@ function updatePlayer(dt) {
     if (player.v < 0.4 && !pushInput()) player.v = 0;
     if (player.stumbleT > 0) player.v = Math.min(player.v, 9);
 
-    if (keys.has('space') && player.grounded) {
-      doJump();
-      keys.delete('space');
-    }
+    if (jumpQueued && player.grounded) doJump();
   }
+  jumpQueued = false;
 
   if (player.grounded) {
     // rotating platforms carry and turn you
@@ -413,14 +416,24 @@ function updatePlayer(dt) {
     }
   } else {
     player.airT += dt;
-    player.vel.addScaledVector(player.gravN, -26 * dt);
-    if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * 1.0 * dt);
+    // hold space to glide — wings out, the city beneath you; shift to dive
+    const gliding = playing && spaceDown;
+    const diving = playing && tuckInput();
+    const g = gliding ? 8.5 : diving ? 42 : 26;
+    player.vel.addScaledVector(player.gravN, -g * dt);
+    const vn = player.vel.dot(player.gravN);
+    if (gliding && vn < -7) {
+      player.vel.addScaledVector(player.gravN, (-7 - vn) * Math.min(1, dt * 3));
+    }
+    if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
+    if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
     const sup = SURF.support(boxes, player.prevP, player.gravN, 80, 0.1);
     player.p.addScaledVector(player.vel, dt);
     if (sup) {
       const a = SURF.axisOf(player.gravN);
       const sgn = SURF.comp(player.gravN, a) >= 0 ? 1 : -1;
       const h = (SURF.comp(player.p, a) - sup.q) * sgn;
+      const fallSpeed = -player.vel.dot(player.gravN);
       if (h <= 0.04 && player.vel.dot(player.gravN) <= 0) {
         player.p.setComponent(a, sup.q);
         player.n.copy(player.gravN);
@@ -439,6 +452,11 @@ function updatePlayer(dt) {
           if (player.airT > 0.85) toast(`+AIR ${Math.round(player.airT * 10) / 10}S`, 0.9);
         } else {
           player.v = landV;
+        }
+        // slamming in from terminal velocity hurts — glide to land soft
+        if (playing && fallSpeed > 30) {
+          player.invulnT = 0;
+          stumble();
         }
         player.airT = 0;
       }
@@ -480,10 +498,11 @@ function updatePlayer(dt) {
     }
   }
 
-  // destination
+  // destination: the night ends in the penthouse, up top
   if (playing && dest) {
     const d = destDist();
-    if (d < 16) {
+    const roofY = city.beacon ? city.beacon.topY : 0;
+    if (d < 14 && player.p.y > roofY - 5) {
       flow += 1500 + members.length * 100;
       audio.blip([523, 659, 784, 1046, 1318], 'triangle', 0.09, 0.16, 0.7);
       toast(`${venueName(night + 1)} — NIGHT ${night + 1} COMPLETE`, 3.0);
@@ -635,7 +654,10 @@ function updateHud() {
   el.speed.textContent = `${Math.round(player.v * 3.6)} KM/H`;
   if (dest) {
     const d = destDist();
-    el.meterLabel.textContent = `TO ${venueName(night + 1)} · ${Math.max(0, Math.round(d))}M`;
+    const low = city.beacon && player.p.y < city.beacon.topY - 5;
+    el.meterLabel.textContent = d < 30 && low
+      ? 'CLIMB TO THE PENTHOUSE'
+      : `TO ${venueName(night + 1)} · ${Math.max(0, Math.round(d))}M`;
     el.meterFill.style.width = `${THREE.MathUtils.clamp(1 - d / dest.d0, 0, 1) * 100}%`;
     el.meterFill.style.background = '#ffd166';
   } else {

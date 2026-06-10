@@ -208,64 +208,119 @@ export class City {
     chunk.boxes.push({ min: min.clone(), max: max.clone() });
   }
 
-  tower(chunk, M, x, z, w, d, h, rng) {
+  // a tier of a tower: glass/concrete slab with windows, edges, collider
+  tierBox(chunk, M, x, z, w, d, y0, h, rng) {
     const variant = Math.floor(rng() * 3);
     const isGlass = rng() < 0.6;
     const mat = isGlass ? this.glassMat(M, variant) : this.concreteWinMat(M, variant);
     mat.emissiveMap.repeat.set(Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(h / 9)));
-    // podium base on some towers
-    let baseH = 0;
-    if (rng() < 0.35 && h > 18) {
-      baseH = 4.5;
-      const pw = w * 1.25, pd = d * 1.25;
-      const pgeo = new THREE.BoxGeometry(pw, baseH, pd);
-      const pod = new THREE.Mesh(pgeo, M.concrete);
-      pod.position.set(x + w / 2, baseH / 2, z + d / 2);
-      pod.castShadow = pod.receiveShadow = true;
-      chunk.group.add(pod);
-      this.collider(chunk,
-        new THREE.Vector3(x + w / 2 - pw / 2, 0, z + d / 2 - pd / 2),
-        new THREE.Vector3(x + w / 2 + pw / 2, baseH, z + d / 2 + pd / 2));
-    }
     const geo = new THREE.BoxGeometry(w, h, d);
     const roof = new THREE.MeshStandardMaterial({
       color: new THREE.Color(M.palette.building).multiplyScalar(0.8), roughness: 0.9 });
     const mesh = new THREE.Mesh(geo, [mat, mat, roof, roof, mat, mat]);
-    mesh.position.set(x + w / 2, baseH + h / 2, z + d / 2);
+    mesh.position.set(x + w / 2, y0 + h / 2, z + d / 2);
     mesh.castShadow = mesh.receiveShadow = true;
     chunk.group.add(mesh);
     const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), rng() < 0.4 ? M.edge : M.edgeSoft);
     line.position.copy(mesh.position);
     chunk.group.add(line);
     this.collider(chunk,
-      new THREE.Vector3(x, baseH, z), new THREE.Vector3(x + w, baseH + h, z + d));
+      new THREE.Vector3(x, y0, z), new THREE.Vector3(x + w, y0 + h, z + d));
+  }
 
-    const top = baseH + h;
-    // rooftop gear: antennas, dish, vents, blinking beacon
-    if (rng() < 0.85) {
-      const ax = x + 2 + rng() * (w - 4), az = z + 2 + rng() * (d - 4);
-      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.1, 5 + rng() * 5, 6), M.metal);
-      ant.position.set(ax, top + ant.geometry.parameters.height / 2, az);
-      chunk.group.add(ant);
-      const blink = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8),
+  tower(chunk, M, x, z, w, d, h, rng) {
+    // stacked tiers with setback terraces — ledges at every altitude
+    let tiers;
+    if (h > 80) tiers = [0.45, 0.32, 0.23];
+    else if (h > 40) tiers = [0.58, 0.42];
+    else tiers = [1];
+    let y0 = 0, tw = w, td = d, tx = x, tz = z;
+    const terraces = [];
+    for (const frac of tiers) {
+      const th = h * frac;
+      this.tierBox(chunk, M, tx, tz, tw, td, y0, th, rng);
+      y0 += th;
+      terraces.push({ x: tx, z: tz, w: tw, d: td, top: y0 });
+      const shrink = 0.72 + rng() * 0.12;
+      const nw = tw * shrink, nd = td * shrink;
+      tx += (tw - nw) / 2;
+      tz += (td - nd) / 2;
+      tw = nw;
+      td = nd;
+    }
+    chunk.terraces.push(...terraces);
+
+    // collar terrace ringing the tower mid-height
+    if (h > 50 && rng() < 0.3) {
+      const hc = h * (0.35 + rng() * 0.25);
+      const t = terraces[0];
+      const ext = 3.6;
+      const mkSlab = (sx, sz, sw, sd) => {
+        const geo = new THREE.BoxGeometry(sw, 1.0, sd);
+        const m = new THREE.Mesh(geo, M.concrete);
+        m.position.set(sx + sw / 2, hc - 0.5, sz + sd / 2);
+        m.castShadow = m.receiveShadow = true;
+        chunk.group.add(m);
+        const ln = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+        ln.position.copy(m.position);
+        chunk.group.add(ln);
+        this.collider(chunk,
+          new THREE.Vector3(sx, hc - 1.0, sz), new THREE.Vector3(sx + sw, hc, sz + sd));
+      };
+      mkSlab(t.x - ext, t.z - ext, t.w + ext * 2, ext);
+      mkSlab(t.x - ext, t.z + t.d, t.w + ext * 2, ext);
+      mkSlab(t.x - ext, t.z, ext, t.d);
+      mkSlab(t.x + t.w, t.z, ext, t.d);
+    }
+
+    // supertalls grow a climbable mast
+    if (h > 80) {
+      const tt = terraces[terraces.length - 1];
+      const mx = tt.x + tt.w / 2, mz = tt.z + tt.d / 2;
+      const mh = 14 + rng() * 8;
+      const geo = new THREE.BoxGeometry(1.7, mh, 1.7);
+      const mast = new THREE.Mesh(geo, M.metal);
+      mast.position.set(mx, tt.top + mh / 2, mz);
+      mast.castShadow = true;
+      chunk.group.add(mast);
+      this.collider(chunk,
+        new THREE.Vector3(mx - 0.85, tt.top, mz - 0.85),
+        new THREE.Vector3(mx + 0.85, tt.top + mh, mz + 0.85));
+      const blink = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8),
         new THREE.MeshBasicMaterial({ color: 0xff3048 }));
-      blink.position.set(ax, top + ant.geometry.parameters.height + 0.2, az);
+      blink.position.set(mx, tt.top + mh + 0.5, mz);
       chunk.group.add(blink);
       this.blinkers.push({ mesh: blink, phase: rng() * 6, chunk });
     }
-    if (rng() < 0.5) {
-      const vx = x + 2 + rng() * (w - 5), vz = z + 2 + rng() * (d - 5);
-      const vent = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 2.2), M.metal);
-      vent.position.set(vx, top + 0.6, vz);
-      vent.castShadow = true;
-      chunk.group.add(vent);
-      this.collider(chunk,
-        new THREE.Vector3(vx - 1.1, top, vz - 1.1), new THREE.Vector3(vx + 1.1, top + 1.2, vz + 1.1));
+
+    // rooftop gear on the top tier: antenna, vents, dish
+    const tt = terraces[terraces.length - 1];
+    if (rng() < 0.85 && tt.w > 6) {
+      const ax = tt.x + 2 + rng() * (tt.w - 4), az = tt.z + 2 + rng() * (tt.d - 4);
+      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.1, 5 + rng() * 5, 6), M.metal);
+      ant.position.set(ax, tt.top + ant.geometry.parameters.height / 2, az);
+      chunk.group.add(ant);
+      const blink = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8),
+        new THREE.MeshBasicMaterial({ color: 0xff3048 }));
+      blink.position.set(ax, tt.top + ant.geometry.parameters.height + 0.2, az);
+      chunk.group.add(blink);
+      this.blinkers.push({ mesh: blink, phase: rng() * 6, chunk });
+    }
+    for (const t of terraces) {
+      if (rng() < 0.4 && t.w > 7) {
+        const vx = t.x + 2 + rng() * (t.w - 5), vz = t.z + 2 + rng() * (t.d - 5);
+        const vent = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.2, 2.2), M.metal);
+        vent.position.set(vx, t.top + 0.6, vz);
+        vent.castShadow = true;
+        chunk.group.add(vent);
+        this.collider(chunk,
+          new THREE.Vector3(vx - 1.1, t.top, vz - 1.1), new THREE.Vector3(vx + 1.1, t.top + 1.2, vz + 1.1));
+      }
     }
     if (rng() < 0.4) {
       const dish = new THREE.Mesh(new THREE.SphereGeometry(1.1, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.metal);
       dish.rotation.x = Math.PI * 0.65;
-      dish.position.set(x + w - 2.5, top + 0.8, z + 2.5);
+      dish.position.set(tt.x + tt.w - 2.5, tt.top + 0.8, tt.z + 2.5);
       chunk.group.add(dish);
     }
 
@@ -279,18 +334,19 @@ export class City {
       const side = rng() < 0.5;
       sign.position.set(
         side ? x - 0.9 : x + w / 2 + (rng() - 0.5) * w * 0.5,
-        baseH + 5.5,
+        5.5,
         side ? z + d / 2 + (rng() - 0.5) * d * 0.5 : z - 0.9);
       chunk.group.add(sign);
     }
-    // animated billboard up the facade
-    if (rng() < 0.3 && h > 20) {
+    // animated billboards up the facade — at altitude, where you ride
+    const bbCount = h > 60 ? 2 : rng() < 0.35 ? 1 : 0;
+    for (let i = 0; i < bbCount; i++) {
       const word = SIGN_WORDS[Math.floor(rng() * SIGN_WORDS.length)];
       const fg = '#' + new THREE.Color(M.palette.sign).getHexString();
       const tex = makeBillboardTexture(word, fg, '#0c0c16');
       const bb = new THREE.Mesh(new THREE.PlaneGeometry(9, 4.5),
         new THREE.MeshBasicMaterial({ map: tex }));
-      bb.position.set(x + w / 2, baseH + h * (0.55 + rng() * 0.25), z - 0.12);
+      bb.position.set(x + w / 2, h * (0.3 + rng() * 0.55), z - 0.12);
       bb.rotation.y = Math.PI;
       chunk.group.add(bb);
       this.billboards.push({ mesh: bb, tex, speed: 0.04 + rng() * 0.08, phase: rng() * 9, chunk });
@@ -412,6 +468,7 @@ export class City {
     const chunk = {
       group: new THREE.Group(), boxes: [], cx, cz,
       rotors: [], recruits: [], windows: [], cars: [], billboards: [], blinkers: [],
+      terraces: [], skySpots: [],
     };
     const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663)) >>> 0);
     const x0 = cx * CHUNK, z0 = cz * CHUNK;
@@ -472,50 +529,114 @@ export class City {
       neon.forEach(g => g.dispose());
     }
 
-    // towers in the block
+    // towers in the block — tall and dense: this city lives in the sky
     const towers = [];
-    for (let i = 0; i < 8 && towers.length < 4; i++) {
-      const w = 12 + rng() * 14, d = 12 + rng() * 14;
-      const tx = x0 + BLOCK0 + 2 + rng() * (CHUNK - BLOCK0 - w - 6);
-      const tz = z0 + BLOCK0 + 2 + rng() * (CHUNK - BLOCK0 - d - 6);
+    for (let i = 0; i < 16 && towers.length < 6; i++) {
+      const w = 13 + rng() * 13, d = 13 + rng() * 13;
+      const tx = x0 + BLOCK0 + 1 + rng() * (CHUNK - BLOCK0 - w - 4);
+      const tz = z0 + BLOCK0 + 1 + rng() * (CHUNK - BLOCK0 - d - 4);
       let ok = true;
       for (const t of towers) {
-        if (tx < t.x + t.w + 7 && tx + w + 7 > t.x && tz < t.z + t.d + 7 && tz + d + 7 > t.z) { ok = false; break; }
+        if (tx < t.x + t.w + 6 && tx + w + 6 > t.x && tz < t.z + t.d + 6 && tz + d + 6 > t.z) { ok = false; break; }
       }
       if (!ok) continue;
-      const h = 12 + Math.pow(rng(), 1.5) * 34;
+      const band = rng();
+      const h = band < 0.28 ? 16 + rng() * 22
+        : band < 0.74 ? 42 + rng() * 38
+        : 82 + rng() * 68;
       towers.push({ x: tx, z: tz, w, d, h });
       this.tower(chunk, M, tx, tz, w, d, h, rng);
     }
 
-    // skybridge: a solid deck connecting two rooftops
-    if (towers.length >= 2 && rng() < 0.55) {
-      const t1 = towers[0], t2 = towers[1];
-      const top = Math.min(t1.h, t2.h);
+    // floating sky slabs — stepping stones of the upper city
+    const slabN = 1 + (rng() < 0.6 ? 1 : 0);
+    for (let i = 0; i < slabN; i++) {
+      const sw = 10 + rng() * 7, sd = 10 + rng() * 7;
+      const sx = x0 + 6 + rng() * (CHUNK - sw - 12);
+      const sz = z0 + 6 + rng() * (CHUNK - sd - 12);
+      const alt = 48 + rng() * 62;
+      const geo = new THREE.BoxGeometry(sw, 1.4, sd);
+      const m = new THREE.Mesh(geo, M.concrete);
+      m.position.set(sx + sw / 2, alt - 0.7, sz + sd / 2);
+      m.castShadow = m.receiveShadow = true;
+      chunk.group.add(m);
+      const ln = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+      ln.position.copy(m.position);
+      chunk.group.add(ln);
+      // neon underside ring so it glows from below
+      const glow = new THREE.Mesh(new THREE.BoxGeometry(sw * 0.8, 0.1, sd * 0.8), M.laneNeon);
+      glow.position.set(sx + sw / 2, alt - 1.5, sz + sd / 2);
+      chunk.group.add(glow);
+      this.collider(chunk,
+        new THREE.Vector3(sx, alt - 1.4, sz), new THREE.Vector3(sx + sw, alt, sz + sd));
+      chunk.skySpots.push({ x: sx + sw / 2, y: alt, z: sz + sd / 2 });
+    }
+
+    // skybridges: decks connecting towers — at the roofline AND mid-air
+    const bridgeAt = (t1, t2, alt) => {
       const c1 = { x: t1.x + t1.w / 2, z: t1.z + t1.d / 2 };
       const c2 = { x: t2.x + t2.w / 2, z: t2.z + t2.d / 2 };
       let min, max;
       if (Math.abs(c1.x - c2.x) > Math.abs(c1.z - c2.z)) {
         const zMid = (c1.z + c2.z) / 2;
-        min = new THREE.Vector3(Math.min(c1.x, c2.x), top - 1.1, zMid - 2.2);
-        max = new THREE.Vector3(Math.max(c1.x, c2.x), top, zMid + 2.2);
+        min = new THREE.Vector3(Math.min(c1.x, c2.x), alt - 1.1, zMid - 2.2);
+        max = new THREE.Vector3(Math.max(c1.x, c2.x), alt, zMid + 2.2);
       } else {
         const xMid = (c1.x + c2.x) / 2;
-        min = new THREE.Vector3(xMid - 2.2, top - 1.1, Math.min(c1.z, c2.z));
-        max = new THREE.Vector3(xMid + 2.2, top, Math.max(c1.z, c2.z));
+        min = new THREE.Vector3(xMid - 2.2, alt - 1.1, Math.min(c1.z, c2.z));
+        max = new THREE.Vector3(xMid + 2.2, alt, Math.max(c1.z, c2.z));
       }
       const geo = new THREE.BoxGeometry(max.x - min.x, 1.1, max.z - min.z);
       const mesh = new THREE.Mesh(geo, M.concrete);
-      mesh.position.set((min.x + max.x) / 2, top - 0.55, (min.z + max.z) / 2);
+      mesh.position.set((min.x + max.x) / 2, alt - 0.55, (min.z + max.z) / 2);
       mesh.castShadow = mesh.receiveShadow = true;
       chunk.group.add(mesh);
       const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
       line.position.copy(mesh.position);
       chunk.group.add(line);
       this.collider(chunk, min, max);
+    };
+    if (towers.length >= 2) {
+      const t1 = towers[0], t2 = towers[1];
+      const top = Math.min(t1.h, t2.h);
+      if (rng() < 0.6) bridgeAt(t1, t2, top);
+      if (top > 50 && rng() < 0.6) bridgeAt(t1, t2, top * (0.4 + rng() * 0.3));
+      if (towers.length >= 3 && rng() < 0.5) {
+        const t3 = towers[2];
+        bridgeAt(t2, t3, Math.min(t2.h, t3.h) * (0.6 + rng() * 0.4));
+      }
     }
 
-    // highline: an elevated walkway striding across the whole block on pillars
+    // sky highline: a walkway striding the whole block, anchored in the towers
+    if (rng() < 0.45) {
+      const h = 42 + rng() * 26;
+      const alongX = rng() < 0.5;
+      const c = BLOCK0 + 6 + rng() * (CHUNK - BLOCK0 - 14);
+      let min, max;
+      if (alongX) {
+        min = new THREE.Vector3(x0 - 0.2, h - 1.1, z0 + c - 2.4);
+        max = new THREE.Vector3(x0 + CHUNK + 0.2, h, z0 + c + 2.4);
+      } else {
+        min = new THREE.Vector3(x0 + c - 2.4, h - 1.1, z0 - 0.2);
+        max = new THREE.Vector3(x0 + c + 2.4, h, z0 + CHUNK + 0.2);
+      }
+      const geo = new THREE.BoxGeometry(max.x - min.x, 1.1, max.z - min.z);
+      const mesh = new THREE.Mesh(geo, M.concrete);
+      mesh.position.set((min.x + max.x) / 2, h - 0.55, (min.z + max.z) / 2);
+      mesh.castShadow = mesh.receiveShadow = true;
+      chunk.group.add(mesh);
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+      line.position.copy(mesh.position);
+      chunk.group.add(line);
+      this.collider(chunk, min, max);
+      const glowGeo = new THREE.BoxGeometry(alongX ? CHUNK : 0.3, 0.08, alongX ? 0.3 : CHUNK);
+      const glow = new THREE.Mesh(glowGeo, M.laneNeon);
+      glow.position.set(mesh.position.x, h - 1.25, mesh.position.z);
+      chunk.group.add(glow);
+      chunk.skySpots.push({ x: mesh.position.x, y: h, z: mesh.position.z });
+    }
+
+    // low highline: an elevated walkway striding across the whole block on pillars
     if (rng() < 0.42) {
       const h = 12 + rng() * 9;
       const alongX = rng() < 0.5;
@@ -562,7 +683,7 @@ export class City {
       const t1 = towers[0], t2 = towers[1];
       const cxr = (t1.x + t1.w / 2 + t2.x + t2.w / 2) / 2;
       const czr = (t1.z + t1.d / 2 + t2.z + t2.d / 2) / 2;
-      const topY = Math.max(9, Math.min(t1.h, t2.h) - rng() * 3);
+      const topY = Math.max(9, Math.min(t1.h, t2.h) * (0.55 + rng() * 0.45));
       const hw = 8 + rng() * 5, hd = 2.4 + rng() * 1.2;
       const w = (rng() < 0.5 ? -1 : 1) * (0.12 + rng() * 0.18);
       const geo = new THREE.BoxGeometry(hw * 2, 1.1, hd * 2);
@@ -680,9 +801,13 @@ export class City {
       const name = RECRUIT_NAMES[this.recruitCounter % RECRUIT_NAMES.length];
       this.recruitCounter++;
       let pos;
-      if (towers.length && rng() < 0.55) {
-        const t = towers[Math.floor(rng() * towers.length)];
-        pos = new THREE.Vector3(t.x + t.w / 2, t.h, t.z + t.d / 2);
+      const spots = [
+        ...chunk.terraces.map(t => ({ x: t.x + t.w / 2, y: t.top, z: t.z + t.d / 2 })),
+        ...chunk.skySpots,
+      ];
+      if (spots.length && rng() < 0.72) {
+        const s = spots[Math.floor(rng() * spots.length)];
+        pos = new THREE.Vector3(s.x, s.y, s.z);
       } else {
         pos = new THREE.Vector3(x0 + BLOCK0 + 6 + rng() * 40, 0, z0 + BLOCK0 + 6 + rng() * 40);
       }
@@ -775,7 +900,7 @@ export class City {
     const M = this.mats(night);
     const group = new THREE.Group();
     const boxes = [];
-    const T = 9, H = 42;
+    const T = 9, H = 84;   // the venue is a supertall — the night ends in its penthouse
     const geo = new THREE.BoxGeometry(T * 2, H, T * 2);
     const tower = new THREE.Mesh(geo, M.gold);
     tower.position.set(pos.x, H / 2, pos.z);
@@ -805,7 +930,7 @@ export class City {
     halo.position.set(pos.x, H + 5, pos.z);
     group.add(halo);
     this.scene.add(group);
-    this.beacon = { pos: pos.clone(), group, boxes, halo, beam };
+    this.beacon = { pos: pos.clone(), group, boxes, halo, beam, topY: H };
   }
 
   clearBeacon() {
