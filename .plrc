@@ -1,0 +1,12 @@
+{
+  "family": "closer-skate",
+  "port": 3501,
+  "portPolicy": "strict",
+  "openPolicy": "family-most-recent",
+  "category": "app",
+  "entrypoint": "index.html",
+  "framework": "vite",
+  "startCommand": "npm",
+  "startArgs": ["run", "dev"],
+  "thumbnail": "docs/preview.png"
+}
