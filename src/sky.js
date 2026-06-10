@@ -56,7 +56,7 @@ export class Sky {
       map: tex, color: 0xfff1d6, transparent: true,
       fog: false, depthWrite: false,
     }));
-    this.sun.scale.setScalar(260);
+    this.sun.scale.setScalar(310);
     this.sun.renderOrder = -15;
     scene.add(this.sun);
 
@@ -116,7 +116,7 @@ export class Sky {
     this.uniforms.horizon.value.copy(atm.horizon);
     this.uniforms.below.value.copy(atm.skyBelow);
     this.sun.material.color.copy(atm.sun);
-    this.sun.position.set(playerPos.x, 14, playerPos.z + 640);
+    this.sun.position.set(playerPos.x, 4, playerPos.z + 640);
 
     for (const c of this.clouds) {
       c.position.x += c.userData.drift * dt;

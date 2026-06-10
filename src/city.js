@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { eraPalette } from './palettes.js';
-import { makeSkater } from './skaters.js';
+import { makeCharacter } from './avatars.js';
 
 export const CHUNK = 96;
 const ROAD = 11;          // road width along west/south chunk edges
@@ -488,8 +488,77 @@ export class City {
       this.tower(chunk, M, tx, tz, w, d, h, rng);
     }
 
+    // skybridge: a solid deck connecting two rooftops
+    if (towers.length >= 2 && rng() < 0.55) {
+      const t1 = towers[0], t2 = towers[1];
+      const top = Math.min(t1.h, t2.h);
+      const c1 = { x: t1.x + t1.w / 2, z: t1.z + t1.d / 2 };
+      const c2 = { x: t2.x + t2.w / 2, z: t2.z + t2.d / 2 };
+      let min, max;
+      if (Math.abs(c1.x - c2.x) > Math.abs(c1.z - c2.z)) {
+        const zMid = (c1.z + c2.z) / 2;
+        min = new THREE.Vector3(Math.min(c1.x, c2.x), top - 1.1, zMid - 2.2);
+        max = new THREE.Vector3(Math.max(c1.x, c2.x), top, zMid + 2.2);
+      } else {
+        const xMid = (c1.x + c2.x) / 2;
+        min = new THREE.Vector3(xMid - 2.2, top - 1.1, Math.min(c1.z, c2.z));
+        max = new THREE.Vector3(xMid + 2.2, top, Math.max(c1.z, c2.z));
+      }
+      const geo = new THREE.BoxGeometry(max.x - min.x, 1.1, max.z - min.z);
+      const mesh = new THREE.Mesh(geo, M.concrete);
+      mesh.position.set((min.x + max.x) / 2, top - 0.55, (min.z + max.z) / 2);
+      mesh.castShadow = mesh.receiveShadow = true;
+      chunk.group.add(mesh);
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+      line.position.copy(mesh.position);
+      chunk.group.add(line);
+      this.collider(chunk, min, max);
+    }
+
+    // highline: an elevated walkway striding across the whole block on pillars
+    if (rng() < 0.42) {
+      const h = 12 + rng() * 9;
+      const alongX = rng() < 0.5;
+      const c = BLOCK0 + 6 + rng() * (CHUNK - BLOCK0 - 14);
+      let min, max;
+      if (alongX) {
+        min = new THREE.Vector3(x0 - 0.2, h - 1.1, z0 + c - 2.4);
+        max = new THREE.Vector3(x0 + CHUNK + 0.2, h, z0 + c + 2.4);
+      } else {
+        min = new THREE.Vector3(x0 + c - 2.4, h - 1.1, z0 - 0.2);
+        max = new THREE.Vector3(x0 + c + 2.4, h, z0 + CHUNK + 0.2);
+      }
+      const geo = new THREE.BoxGeometry(max.x - min.x, 1.1, max.z - min.z);
+      const mesh = new THREE.Mesh(geo, M.concrete);
+      mesh.position.set((min.x + max.x) / 2, h - 0.55, (min.z + max.z) / 2);
+      mesh.castShadow = mesh.receiveShadow = true;
+      chunk.group.add(mesh);
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+      line.position.copy(mesh.position);
+      chunk.group.add(line);
+      this.collider(chunk, min, max);
+      // neon underside strip — visible from the street, very inviting
+      const glowGeo = new THREE.BoxGeometry(
+        alongX ? CHUNK : 0.3, 0.08, alongX ? 0.3 : CHUNK);
+      const glow = new THREE.Mesh(glowGeo, M.laneNeon);
+      glow.position.set(mesh.position.x, h - 1.2, mesh.position.z);
+      chunk.group.add(glow);
+      // climbable support pillars
+      for (let tpos = 14; tpos < CHUNK - 4; tpos += 30) {
+        const px = alongX ? x0 + tpos : x0 + c;
+        const pz = alongX ? z0 + c : z0 + tpos;
+        const pg = new THREE.BoxGeometry(1.4, h - 1.1, 1.4);
+        const pm = new THREE.Mesh(pg, M.concrete);
+        pm.position.set(px, (h - 1.1) / 2, pz);
+        pm.castShadow = true;
+        chunk.group.add(pm);
+        this.collider(chunk,
+          new THREE.Vector3(px - 0.7, 0, pz - 0.7), new THREE.Vector3(px + 0.7, h - 1.1, pz + 0.7));
+      }
+    }
+
     // spinning platform between two roofs
-    if (towers.length >= 2 && rng() < 0.5) {
+    if (towers.length >= 2 && rng() < 0.6) {
       const t1 = towers[0], t2 = towers[1];
       const cxr = (t1.x + t1.w / 2 + t2.x + t2.w / 2) / 2;
       const czr = (t1.z + t1.d / 2 + t2.z + t2.d / 2) / 2;
@@ -611,13 +680,13 @@ export class City {
       const name = RECRUIT_NAMES[this.recruitCounter % RECRUIT_NAMES.length];
       this.recruitCounter++;
       let pos;
-      if (towers.length && rng() < 0.3) {
+      if (towers.length && rng() < 0.55) {
         const t = towers[Math.floor(rng() * towers.length)];
         pos = new THREE.Vector3(t.x + t.w / 2, t.h, t.z + t.d / 2);
       } else {
         pos = new THREE.Vector3(x0 + BLOCK0 + 6 + rng() * 40, 0, z0 + BLOCK0 + 6 + rng() * 40);
       }
-      const rig = makeSkater({ outfit: color, dress: rng() < 0.4 });
+      const rig = makeCharacter({ outfit: color, accent: color, dress: rng() < 0.4 });
       this.scene.add(rig.root);
       const rec = { p: pos, name, color, rig, phase: rng() * Math.PI * 2, chunk };
       chunk.recruits.push(rec);

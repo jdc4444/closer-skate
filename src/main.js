@@ -14,8 +14,12 @@ import { nightLabel, venueName, blendedAtmosphere, eraPalette } from './palettes
 import { City, CHUNK } from './city.js';
 import { Sky } from './sky.js';
 import * as SURF from './surface.js';
-import { makeSkater, Trail } from './skaters.js';
+import { Trail } from './skaters.js';
+import { initAvatars, makeCharacter, lib as avatarLib } from './avatars.js';
 import { DiscoAudio } from './audio.js';
+
+// real rigged characters; falls back to procedural rigs if missing
+window.__avatarInfo = await initAvatars();
 
 // ---------------------------------------------------------------- setup
 const app = document.getElementById('app');
@@ -150,7 +154,8 @@ const player = {
   airT: 0,
   tuck: 0,
   stumbleT: 0, invulnT: 0, boostPulse: 0,
-  rig: makeSkater({ outfit: 0xffc23d, hair: 0xff4660, skin: 0xeab38a, dress: false, jeans: true, accent: 0xff8a3d }),
+  rig: makeCharacter({ kind: 'michelle', outfit: 0xffc23d, accent: 0xff8a3d, marker: false,
+    hair: 0xff4660, skin: 0xeab38a, jeans: true }),
 };
 scene.add(player.rig.root);
 
@@ -197,7 +202,7 @@ function destDist() {
 }
 
 function addMember(rec) {
-  const rig = makeSkater({ outfit: rec.color, dress: Math.random() < 0.7 });
+  const rig = makeCharacter({ outfit: rec.color, accent: rec.color, dress: Math.random() < 0.7 });
   scene.add(rig.root);
   members.push({
     name: rec.name, color: rec.color, rig,
