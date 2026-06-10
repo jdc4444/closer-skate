@@ -479,14 +479,12 @@ function updatePlayer(dt) {
     if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
     if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
 
-    // gravity sculpting: WHILE GLIDING (space held), W/S pitch your personal
-    // "down" forward and back, A/D roll it sideways — land feet-first on
-    // facades and undersides. Gating on glide means a stray WASD tap during
-    // a normal fall can't flip the world (it read as the character
-    // glitching out). Release to settle onto the nearest plane.
-    const sculpting = playing && gliding;
-    const pitchIn = sculpting ? (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0) : 0;
-    const rollIn = sculpting ? (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0) : 0;
+    // gravity sculpting: in the air, W/S pitch your personal "down" and
+    // A/D roll it sideways — land feet-first on facades and undersides.
+    // The short airborne delay keeps bunny-hop key spam from flipping you.
+    const sculpting = playing && player.airT > 0.15;
+    const pitchIn = sculpting ? (keys.has('s') ? 1 : 0) - (keys.has('w') ? 1 : 0) : 0;
+    const rollIn = sculpting ? (keys.has('a') ? 1 : 0) - (keys.has('d') ? 1 : 0) : 0;
     if (pitchIn !== 0) {
       // pitch around the body's own right axis — facing stays the reference
       _right.crossVectors(player.f, player.gravN);
