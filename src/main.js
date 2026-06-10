@@ -19,8 +19,14 @@ import { Trail } from './skaters.js';
 import { initAvatars, makeCharacter, lib as avatarLib } from './avatars.js';
 import { DiscoAudio } from './audio.js';
 
-// real rigged characters; falls back to procedural rigs if missing
-window.__avatarInfo = await initAvatars();
+// real rigged characters; falls back to procedural rigs if missing.
+// the title screen shows download progress while the hero arrives
+const _tstart = document.getElementById('tstart');
+if (_tstart) _tstart.textContent = 'LOADING · 0%';
+window.__avatarInfo = await initAvatars((p) => {
+  if (_tstart && p < 1) _tstart.textContent = `LOADING · ${Math.round(p * 100)}%`;
+});
+if (_tstart) _tstart.textContent = 'PRESS SPACE TO SKATE';
 
 // ---------------------------------------------------------------- setup
 const app = document.getElementById('app');
@@ -45,8 +51,9 @@ const smaa = new SMAAPass(
   window.innerWidth * renderer.getPixelRatio(),
   window.innerHeight * renderer.getPixelRatio());
 composer.addPass(smaa);
+// threshold high enough that fog-dimmed windows can't bloom into confetti
 const bloom = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.55, 0.78);
+  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.4, 0.5, 0.93);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
@@ -54,15 +61,15 @@ const ambient = new THREE.AmbientLight(0x6a5070, 0.88);
 scene.add(ambient);
 const dirLight = new THREE.DirectionalLight(0x9a86c8, 0.9);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.set(2048, 2048);
-dirLight.shadow.camera.left = -90;
-dirLight.shadow.camera.right = 90;
-dirLight.shadow.camera.top = 90;
-dirLight.shadow.camera.bottom = -90;
+dirLight.shadow.mapSize.set(4096, 4096);
+dirLight.shadow.camera.left = -60;
+dirLight.shadow.camera.right = 60;
+dirLight.shadow.camera.top = 60;
+dirLight.shadow.camera.bottom = -60;
 dirLight.shadow.camera.near = 1;
 dirLight.shadow.camera.far = 320;
-dirLight.shadow.bias = -0.0004;
-dirLight.shadow.normalBias = 0.6;
+dirLight.shadow.bias = -0.0008;
+dirLight.shadow.normalBias = 1.2;
 scene.add(dirLight);
 scene.add(dirLight.target);
 const LIGHT_OFF = new THREE.Vector3(34, 80, -28);
@@ -472,11 +479,14 @@ function updatePlayer(dt) {
     if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
     if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
 
-    // gravity sculpting: in the air, W/S pitch your personal "down" forward
-    // and back, A/D roll it sideways — land feet-first on facades and
-    // undersides. Release to settle onto the nearest plane.
-    const pitchIn = playing ? (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0) : 0;
-    const rollIn = playing ? (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0) : 0;
+    // gravity sculpting: WHILE GLIDING (space held), W/S pitch your personal
+    // "down" forward and back, A/D roll it sideways — land feet-first on
+    // facades and undersides. Gating on glide means a stray WASD tap during
+    // a normal fall can't flip the world (it read as the character
+    // glitching out). Release to settle onto the nearest plane.
+    const sculpting = playing && gliding;
+    const pitchIn = sculpting ? (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0) : 0;
+    const rollIn = sculpting ? (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0) : 0;
     if (pitchIn !== 0) {
       // pitch around the body's own right axis — facing stays the reference
       _right.crossVectors(player.f, player.gravN);
@@ -825,6 +835,7 @@ window.__test = {
   keysDbg: () => [...keys],
   gravN: () => ({ x: +player.gravN.x.toFixed(2), y: +player.gravN.y.toFixed(2), z: +player.gravN.z.toFixed(2) }),
   avatar: () => player.rig._dbg ?? null,
+  playerArm: () => player.rig.armDir ? player.rig.armDir() : null,
   mirror: (v) => { if (mirror) { mirror.visible = v; asphaltSkin.visible = v; } return !!mirror && mirror.visible; },
   members: () => members.slice(0, 4).map(m => ({
     x: +m.p.x.toFixed(1), y: +m.p.y.toFixed(1), z: +m.p.z.toFixed(1),

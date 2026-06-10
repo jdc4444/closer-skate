@@ -5,16 +5,21 @@
 // breathing idle — so limbs can never explode and he never T-poses.
 // Falls back to procedural rigs if loading fails.
 import * as THREE from 'three';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { makeSkater } from './skaters.js';
 
 export const lib = { ready: false, source: null, info: {} };
 
-export async function initAvatars() {
-  const loader = new FBXLoader();
+export async function initAvatars(onProgress) {
+  const loader = new GLTFLoader();
   try {
-    const group = await loader.loadAsync(`${import.meta.env.BASE_URL}models/Ch29_nonPBR.fbx`);
+    const gltf = await loader.loadAsync(
+      `${import.meta.env.BASE_URL}models/hero.glb`,
+      (ev) => {
+        if (onProgress && ev.total > 0) onProgress(ev.loaded / ev.total);
+      });
+    const group = gltf.scene;
     const box = new THREE.Box3().setFromObject(group);
     const mats = new Set();
     group.traverse(o => {
@@ -25,11 +30,12 @@ export async function initAvatars() {
     });
     lib.source = {
       scene: group,
+      animations: gltf.animations ?? [],
       height: Math.max(0.01, box.max.y - box.min.y),
     };
     lib.info.hero = {
       height: +lib.source.height.toFixed(2),
-      clips: (group.animations ?? []).map(a => `${a.name}:${a.duration.toFixed(1)}s`),
+      clips: (gltf.animations ?? []).map(a => `${a.name}:${a.duration.toFixed(1)}s`),
       materials: [...mats],
     };
     lib.ready = true;
@@ -37,6 +43,7 @@ export async function initAvatars() {
     lib.info.hero = { error: String(e).slice(0, 140) };
     lib.ready = false;
   }
+  if (onProgress) onProgress(1);
   return lib.info;
 }
 
@@ -270,8 +277,8 @@ export function makeCharacter(opts = {}) {
   const mixer = new THREE.AnimationMixer(model);
   const bases = armBases(bones, model);
   const skate = mixer.clipAction(buildSkateClip(bones, bases));
-  // if the FBX shipped with a baked Mixamo clip, that's the idle
-  const native = (src.scene.animations ?? []).find(c => c.duration > 0.5);
+  // if the model shipped with a baked clip, that's the idle
+  const native = (src.animations ?? []).find(c => c.duration > 0.5);
   const idleClip = native ?? buildIdleClip(bones, bases);
   const idle = mixer.clipAction(idleClip);
   skate.play();
@@ -299,14 +306,21 @@ export function makeCharacter(opts = {}) {
     lean.position.y = -crouch * 0.26;
   }
 
+  const _wa = new THREE.Vector3(), _wf = new THREE.Vector3();
   return {
     root, animate, kind: 'hero',
+    armDir: () => {
+      if (!bones.leftarm || !bones.leftforearm) return null;
+      bones.leftarm.getWorldPosition(_wa);
+      bones.leftforearm.getWorldPosition(_wf);
+      _wf.sub(_wa).normalize();
+      return { x: +_wf.x.toFixed(2), y: +_wf.y.toFixed(2), z: +_wf.z.toFixed(2) };
+    },
     _dbg: {
       bones: Object.keys(bones),
       idle: idleClip.name,
-      idleTracks: idleClip.tracks.slice(0, 3).map(tr => tr.name),
       skateTracks: skate.getClip().tracks.length,
-      allBones: (() => { const n = []; model.traverse(o => { if (o.isBone && n.length < 12) n.push(o.name); }); return n; })(),
+      baseL: bases.left ? bases.left.toArray().map(v => +v.toFixed(3)) : null,
     },
   };
 }
