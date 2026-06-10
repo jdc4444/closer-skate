@@ -430,39 +430,35 @@ function updatePlayer(dt) {
     }
     if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
     if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
-    const sup = SURF.support(boxes, player.prevP, player.gravN, 80, 0.1);
     player.p.addScaledVector(player.vel, dt);
-    if (sup) {
+    const land = SURF.sweepLand(boxes, player.prevP, player.p, player.gravN);
+    if (land && player.vel.dot(player.gravN) <= 0) {
       const a = SURF.axisOf(player.gravN);
-      const sgn = SURF.comp(player.gravN, a) >= 0 ? 1 : -1;
-      const h = (SURF.comp(player.p, a) - sup.q) * sgn;
       const fallSpeed = -player.vel.dot(player.gravN);
-      if (h <= 0.04 && player.vel.dot(player.gravN) <= 0) {
-        player.p.setComponent(a, sup.q);
-        player.n.copy(player.gravN);
-        _t1.copy(player.vel).addScaledVector(player.gravN, -player.vel.dot(player.gravN));
-        if (_t1.lengthSq() > 1) player.f.copy(_t1).normalize();
-        const landV = THREE.MathUtils.clamp(_t1.length(), 0, 48);
-        player.grounded = true;
-        player.box = sup.box;
-        player.vel.set(0, 0, 0);
-        // building-to-building air rewarded
-        if (playing && player.airT > 0.55 && sup.q > 3.5) {
-          flow += Math.round(120 + player.airT * 160);
-          player.v = Math.min(landV + 5, 46);
-          player.boostPulse = 0.8;
-          audio.boost();
-          if (player.airT > 0.85) toast(`+AIR ${Math.round(player.airT * 10) / 10}S`, 0.9);
-        } else {
-          player.v = landV;
-        }
-        // slamming in from terminal velocity hurts — glide to land soft
-        if (playing && fallSpeed > 30) {
-          player.invulnT = 0;
-          stumble();
-        }
-        player.airT = 0;
+      player.p.setComponent(a, land.q);
+      player.n.copy(player.gravN);
+      _t1.copy(player.vel).addScaledVector(player.gravN, -player.vel.dot(player.gravN));
+      if (_t1.lengthSq() > 1) player.f.copy(_t1).normalize();
+      const landV = THREE.MathUtils.clamp(_t1.length(), 0, 48);
+      player.grounded = true;
+      player.box = land.box;
+      player.vel.set(0, 0, 0);
+      // building-to-building air rewarded
+      if (playing && player.airT > 0.55 && land.q > 3.5) {
+        flow += Math.round(120 + player.airT * 160);
+        player.v = Math.min(landV + 5, 46);
+        player.boostPulse = 0.8;
+        audio.boost();
+        if (player.airT > 0.85) toast(`+AIR ${Math.round(player.airT * 10) / 10}S`, 0.9);
+      } else {
+        player.v = landV;
       }
+      // slamming in from terminal velocity hurts — glide to land soft
+      if (playing && fallSpeed > 30) {
+        player.invulnT = 0;
+        stumble();
+      }
+      player.airT = 0;
     }
     // leap at a facade and ride it
     if (!player.grounded) {
@@ -484,7 +480,12 @@ function updatePlayer(dt) {
         }
       }
     }
-    if (player.p.y < -50 || player.p.y > 240 || !isFinite(player.p.y)) respawn();
+    if (player.p.y < -2.5 || player.p.y > 240 || !isFinite(player.p.y)) respawn();
+  }
+
+  // nothing lives under the street — if you ever slip below it, step back up
+  if (player.grounded && player.p.y < -1.5) {
+    respawn();
   }
 
   // traffic is real: clip a car and you eat asphalt

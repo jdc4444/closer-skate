@@ -51,6 +51,46 @@ export function support(boxes, p, n, maxDrop = 0.9, grow = 0.06) {
   return best;
 }
 
+// Swept landing test: which face (normal == n) did the segment from->to
+// cross this frame? Checks lateral bounds AT THE CROSSING POINT, so fast
+// falls and long glides can't tunnel through roofs, slabs or bridges.
+const _sweepPt = new THREE.Vector3();
+export function sweepLand(boxes, from, to, n, grow = 0.12) {
+  const a = axisOf(n);
+  const s = comp(n, a) >= 0 ? 1 : -1;
+  const fa = comp(from, a), ta = comp(to, a);
+  if ((fa - ta) * s <= 0) return null;        // not descending along -n
+  let best = null;
+  for (const b of boxes) {
+    if (b.rot && a !== 1) continue;
+    const q = s > 0 ? comp(b.max, a) : comp(b.min, a);
+    const hf = (fa - q) * s, ht = (ta - q) * s;
+    if (hf < -0.08 || ht > 0.04) continue;     // plane not crossed downward
+    const t = THREE.MathUtils.clamp(hf / Math.max(1e-6, hf - ht), 0, 1);
+    _sweepPt.copy(from).lerp(to, t);
+    let inside = true;
+    if (b.rot) {
+      const cy = Math.cos(b.rot.yaw), sy = Math.sin(b.rot.yaw);
+      const dx = _sweepPt.x - b.rot.cx, dz = _sweepPt.z - b.rot.cz;
+      const lx = dx * cy + dz * sy;
+      const lz = -dx * sy + dz * cy;
+      inside = lx >= b.min.x - grow && lx <= b.max.x + grow &&
+               lz >= b.min.z - grow && lz <= b.max.z + grow;
+    } else {
+      for (let k = 0; k < 3; k++) {
+        if (k === a) continue;
+        if (comp(_sweepPt, k) < comp(b.min, k) - grow || comp(_sweepPt, k) > comp(b.max, k) + grow) {
+          inside = false;
+          break;
+        }
+      }
+    }
+    if (!inside) continue;
+    if (!best || (q - best.q) * s > 0) best = { box: b, q };  // first plane hit
+  }
+  return best;
+}
+
 // Point containment for flock slot projection (static boxes only).
 export function insideBox(p, b, grow = 0) {
   if (b.rot) return false;
