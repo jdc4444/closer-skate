@@ -14,7 +14,7 @@ export const lib = { ready: false, source: null, info: {} };
 export async function initAvatars() {
   const loader = new FBXLoader();
   try {
-    const group = await loader.loadAsync('/models/Ch29_nonPBR.fbx');
+    const group = await loader.loadAsync(`${import.meta.env.BASE_URL}models/Ch29_nonPBR.fbx`);
     const box = new THREE.Box3().setFromObject(group);
     const mats = new Set();
     group.traverse(o => {
