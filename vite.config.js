@@ -5,4 +5,7 @@ export default defineConfig({
     port: 3501,
     strictPort: true,
   },
+  resolve: {
+    dedupe: ['three'],
+  },
 });

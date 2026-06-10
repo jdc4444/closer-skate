@@ -20,7 +20,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
+renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
@@ -33,13 +33,13 @@ const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerH
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.45, 0.55, 0.82);
+  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.32, 0.5, 0.92);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
-const ambient = new THREE.AmbientLight(0xffd2b8, 1.5);
+const ambient = new THREE.AmbientLight(0xffd2b8, 1.05);
 scene.add(ambient);
-const dirLight = new THREE.DirectionalLight(0xfff1d6, 2.4);
+const dirLight = new THREE.DirectionalLight(0xfff1d6, 1.55);
 dirLight.castShadow = true;
 dirLight.shadow.mapSize.set(2048, 2048);
 dirLight.shadow.camera.left = -90;
@@ -312,8 +312,12 @@ function updatePlayer(dt) {
         const ang = signedAngle(player.f, _t1.normalize(), player.n);
         appliedSteer = THREE.MathUtils.clamp(ang * 1.6, -1, 1);
       }
-      if (playing && target.jump && player.grounded &&
-          target.p.distanceTo(player.p) < 7.5) doJump();
+      if (playing && player.grounded) {
+        for (let i = player.routeIdx; i < Math.min(player.routeIdx + 4, city.route.length); i++) {
+          const pt = city.route[i];
+          if (pt.jump && pt.p.distanceToSquared(player.p) < 40) { doJump(); break; }
+        }
+      }
     }
     player.v += ((playing ? 24 : 13) - player.v) * Math.min(1, dt);
   } else {
@@ -567,8 +571,8 @@ function updateCamera(dt) {
   if (smoothF.lengthSq() < 1e-4) smoothF.copy(player.f);
   smoothF.normalize();
 
-  _t1.copy(player.p).addScaledVector(smoothUp, 4.7).addScaledVector(smoothF, -9.4);
-  _t2.copy(player.p).addScaledVector(smoothUp, 1.7).addScaledVector(smoothF, 9.5);
+  _t1.copy(player.p).addScaledVector(smoothUp, 4.1).addScaledVector(smoothF, -9.8);
+  _t2.copy(player.p).addScaledVector(smoothUp, 2.1).addScaledVector(smoothF, 11.5);
   camPos.lerp(_t1, 1 - Math.exp(-7 * dt));
   camLook.lerp(_t2, 1 - Math.exp(-8.5 * dt));
 
@@ -615,6 +619,7 @@ function updateHud(d) {
 // ---------------------------------------------------------------- loop
 addMember(ROSTER[rosterNext++], leaderS);
 
+window.__stepOnce = () => step(0.016);
 window.__test = {
   push: (dv = 25) => { player.v = Math.min(46, player.v + dv); },
   jump: () => { if (player.grounded) doJump(); },
@@ -627,10 +632,21 @@ function frame() {
   requestAnimationFrame(frame);
   step();
 }
-setInterval(() => { if (document.hidden) step(); }, 50);
+// Hidden tabs throttle timers hard; in test mode (__auto) run catch-up
+// substeps so automated runs keep real-time pace while backgrounded.
+let lastTick = performance.now();
+setInterval(() => {
+  if (!document.hidden) { lastTick = performance.now(); return; }
+  const now = performance.now();
+  let budget = Math.min(1.5, (now - lastTick) / 1000);
+  lastTick = now;
+  if (!window.__auto) { step(); return; }
+  while (budget > 0.001) { step(0.034); budget -= 0.034; }
+}, 50);
 
-function step() {
-  const dt = Math.min(0.034, clock.getDelta());
+function step(dtOverride) {
+  const dt = dtOverride ?? Math.min(0.034, clock.getDelta());
+  if (window.__freeze) { composer.render(); return; }
   elapsed += dt;
 
   city.ensure(player.p.z);
