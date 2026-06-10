@@ -112,6 +112,7 @@ export class City {
     this.billboards = [];
     this.blinkers = [];
     this.night = 0;
+    this.recruitsEnabled = false;   // solo night for now
     this.recruitCounter = 0;
     this.beacon = null;
     this._boxCache = { key: '', boxes: [] };
@@ -401,19 +402,7 @@ export class City {
         side ? z + d / 2 + (rng() - 0.5) * d * 0.5 : z - 0.9);
       chunk.group.add(sign);
     }
-    // animated billboards up the facade — at altitude, where you ride
-    const bbCount = h > 60 ? 2 : rng() < 0.35 ? 1 : 0;
-    for (let i = 0; i < bbCount; i++) {
-      const word = SIGN_WORDS[Math.floor(rng() * SIGN_WORDS.length)];
-      const fg = '#' + new THREE.Color(M.palette.sign).getHexString();
-      const tex = makeBillboardTexture(word, fg, '#0c0c16');
-      const bb = new THREE.Mesh(new THREE.PlaneGeometry(9, 4.5),
-        new THREE.MeshBasicMaterial({ map: tex }));
-      bb.position.set(x + w / 2, h * (0.3 + rng() * 0.55), z - 0.12);
-      bb.rotation.y = Math.PI;
-      chunk.group.add(bb);
-      this.billboards.push({ mesh: bb, tex, speed: 0.04 + rng() * 0.08, phase: rng() * 9, chunk });
-    }
+    // (no text up high — signage lives at street level only)
   }
 
   streetlight(chunk, M, x, z, faceX) {
@@ -890,8 +879,8 @@ export class City {
       }
     }
 
-    // a lone skater waiting for a troupe
-    if (rng() < 0.5) {
+    // a lone skater waiting for a troupe (off for now: solo night)
+    if (this.recruitsEnabled && rng() < 0.5) {
       const color = RECRUIT_COLORS[this.recruitCounter % RECRUIT_COLORS.length];
       const name = RECRUIT_NAMES[this.recruitCounter % RECRUIT_NAMES.length];
       this.recruitCounter++;
