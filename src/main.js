@@ -103,7 +103,7 @@ const mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
   clipBias: 0.003,
   textureWidth: 1024,
   textureHeight: 1024,
-  color: 0x46525a,
+  color: 0x39444e,
 });
 mirror.rotation.x = -Math.PI / 2;
 mirror.position.y = 0.02;
@@ -241,9 +241,10 @@ let spaceDown = false;
 let jumpQueued = false;
 window.addEventListener('keydown', (e) => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
-  if (!playing && (e.key === ' ' || e.key === 'Enter')) { startGame(); return; }
-  // a real hand on the keys always overrides the test autopilot
+  // a real hand on the keys always overrides the test autopilot / freeze
   if (window.__auto) window.__auto = false;
+  if (window.__freeze) window.__freeze = false;
+  if (!playing && (e.key === ' ' || e.key === 'Enter')) { startGame(); return; }
   keys.add(e.key.toLowerCase());
   if (e.key === ' ') {
     if (!e.repeat) jumpQueued = true;
@@ -745,6 +746,7 @@ window.__test = {
   f: () => ({ x: +player.f.x.toFixed(2), y: +player.f.y.toFixed(2), z: +player.f.z.toFixed(2) }),
   keysDbg: () => [...keys],
   gravN: () => ({ x: +player.gravN.x.toFixed(2), y: +player.gravN.y.toFixed(2), z: +player.gravN.z.toFixed(2) }),
+  avatar: () => player.rig._dbg ?? null,
   members: () => members.slice(0, 4).map(m => ({
     x: +m.p.x.toFixed(1), y: +m.p.y.toFixed(1), z: +m.p.z.toFixed(1),
     dp: +m.p.distanceTo(player.p).toFixed(1),

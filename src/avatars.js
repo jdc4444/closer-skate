@@ -1,35 +1,40 @@
-// avatars.js — real skinned humans, animated safely.
-// Michelle (a Mixamo-rigged dancer from the three.js examples) is every
-// skater: the player plain, the troupe as tinted variants with skirts and
-// size variation. Movement clips are AUTHORED at runtime against each
-// skeleton's own rest pose (no cross-rig retargeting — that's what made
-// limbs explode), so the skate stride is an actual skate stride: low
-// stance, scissoring legs, swinging arms. Her one native clip, SambaDance,
-// plays whenever she stops. Falls back to procedural rigs if loading fails.
+// avatars.js — one hero character for everyone: a Mixamo FBX (Ch29),
+// cloned for the player, troupe and recruits (troupe gets color tints,
+// skirts and size variation). All movement clips are AUTHORED at runtime
+// against the skeleton's own rest pose — a real skate stride and a
+// breathing idle — so limbs can never explode and he never T-poses.
+// Falls back to procedural rigs if loading fails.
 import * as THREE from 'three';
-import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { makeSkater } from './skaters.js';
 
 export const lib = { ready: false, source: null, info: {} };
 
 export async function initAvatars() {
-  const loader = new GLTFLoader();
+  const loader = new FBXLoader();
   try {
-    const gltf = await loader.loadAsync('/models/Michelle.glb');
-    const box = new THREE.Box3().setFromObject(gltf.scene);
+    const group = await loader.loadAsync('/models/Ch29_nonPBR.fbx');
+    const box = new THREE.Box3().setFromObject(group);
+    const mats = new Set();
+    group.traverse(o => {
+      if (o.isMesh || o.isSkinnedMesh) {
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) mats.add(`${m.type}${m.map ? '+map' : ''}`);
+      }
+    });
     lib.source = {
-      scene: gltf.scene,
-      clips: gltf.animations ?? [],
+      scene: group,
       height: Math.max(0.01, box.max.y - box.min.y),
     };
-    lib.info.michelle = {
+    lib.info.hero = {
       height: +lib.source.height.toFixed(2),
-      clips: lib.source.clips.map(a => a.name),
+      clips: (group.animations ?? []).map(a => `${a.name}:${a.duration.toFixed(1)}s`),
+      materials: [...mats],
     };
     lib.ready = true;
   } catch (e) {
-    lib.info.michelle = { error: String(e).slice(0, 120) };
+    lib.info.hero = { error: String(e).slice(0, 140) };
     lib.ready = false;
   }
   return lib.info;
@@ -47,7 +52,7 @@ function mapBones(model) {
   const bones = {};
   model.traverse(o => {
     if (!o.isBone) return;
-    const n = o.name.toLowerCase().replace(/^mixamorig:?/, '').replace(/[_\s]/g, '');
+    const n = o.name.toLowerCase().replace(/^mixamorig\d*:?/, '').replace(/[_\s]/g, '');
     if (BONE_KEYS.includes(n) && !bones[n]) bones[n] = o;
   });
   return bones;
@@ -80,9 +85,9 @@ function quatKeys(bone, times, angles, axis = X, zAngles = null) {
 function buildSkateClip(bones) {
   const T = [0, 0.25, 0.5, 0.75, 1.0];
   const tracks = [];
-  const SW = 0.55;        // stride swing
-  const STANCE = -0.38;   // thighs forward = sitting into the skate
-  const KNEE = 0.62;      // standing knee bend
+  const SW = 0.55;
+  const STANCE = -0.38;
+  const KNEE = 0.62;
 
   const wave = (phase, amp, offset = 0) =>
     T.map(t => offset + amp * Math.sin(2 * Math.PI * (t + phase)));
@@ -94,7 +99,6 @@ function buildSkateClip(bones) {
       wave(0.75, 0.10, -0.06)));
   }
   if (bones.leftleg && bones.rightleg) {
-    // knees: bent in stance, extending on the push
     tracks.push(quatKeys(bones.leftleg, T,
       T.map(t => KNEE + 0.35 * Math.max(0, Math.sin(2 * Math.PI * t)))));
     tracks.push(quatKeys(bones.rightleg, T,
@@ -105,7 +109,7 @@ function buildSkateClip(bones) {
     tracks.push(quatKeys(bones.rightfoot, T, wave(0.5, 0.12, -0.30)));
   }
   if (bones.leftarm && bones.rightarm) {
-    // bring the arms down from the T-pose, then swing them with the stride
+    // arms down from the T-pose, swinging with the stride
     tracks.push(quatKeys(bones.leftarm, T, wave(0.5, SW * 0.45), X,
       T.map(() => 1.05)));
     tracks.push(quatKeys(bones.rightarm, T, wave(0, SW * 0.45), X,
@@ -129,9 +133,48 @@ function buildSkateClip(bones) {
   return new THREE.AnimationClip('SkateCycle', 1.0, tracks);
 }
 
-// ---------------------------------------------------------------- factory
-const SKIRT_COLORS = null; // skirt takes the outfit tint
+// at rest: easy knees, arms at the sides, breathing, a slow weight shift
+function buildIdleClip(bones) {
+  const T = [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
+  const tracks = [];
+  const sway = (phase, amp, offset = 0) =>
+    T.map(t => offset + amp * Math.sin((2 * Math.PI * (t / 3) + phase)));
 
+  if (bones.leftupleg && bones.rightupleg) {
+    tracks.push(quatKeys(bones.leftupleg, T, sway(0, 0.02, -0.14), X, sway(0, 0.02, 0.05)));
+    tracks.push(quatKeys(bones.rightupleg, T, sway(Math.PI, 0.02, -0.14), X, sway(0, 0.02, -0.05)));
+  }
+  if (bones.leftleg && bones.rightleg) {
+    tracks.push(quatKeys(bones.leftleg, T, sway(0, 0.02, 0.26)));
+    tracks.push(quatKeys(bones.rightleg, T, sway(Math.PI, 0.02, 0.26)));
+  }
+  if (bones.leftfoot && bones.rightfoot) {
+    tracks.push(quatKeys(bones.leftfoot, T, T.map(() => -0.12)));
+    tracks.push(quatKeys(bones.rightfoot, T, T.map(() => -0.12)));
+  }
+  if (bones.leftarm && bones.rightarm) {
+    tracks.push(quatKeys(bones.leftarm, T, sway(0, 0.03, 0.02), X, T.map(() => 1.12)));
+    tracks.push(quatKeys(bones.rightarm, T, sway(Math.PI, 0.03, 0.02), X, T.map(() => -1.12)));
+  }
+  if (bones.leftforearm && bones.rightforearm) {
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.25)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.25)));
+  }
+  if (bones.spine) tracks.push(quatKeys(bones.spine, T, sway(0, 0.025, 0.05)));
+  if (bones.hips) {
+    const p0 = bones.hips.position;
+    const vals = [];
+    for (let i = 0; i < T.length; i++) {
+      vals.push(p0.x + p0.y * 0.008 * Math.sin(2 * Math.PI * (T[i] / 3)),
+        p0.y * (0.985 + 0.008 * Math.sin(2 * Math.PI * (T[i] / 1.5))), p0.z);
+    }
+    tracks.push(new THREE.VectorKeyframeTrack(`${bones.hips.name}.position`, T, vals));
+  }
+  return new THREE.AnimationClip('IdleSway', 3.0, tracks);
+}
+
+// ---------------------------------------------------------------- factory
+// Same interface as the procedural makeSkater: { root, animate(t, speed, lean, crouch) }
 export function makeCharacter(opts = {}) {
   if (!lib.ready) return makeSkater(opts);
   const src = lib.source;
@@ -140,12 +183,12 @@ export function makeCharacter(opts = {}) {
   const lean = new THREE.Group();
   root.add(lean);
   const model = SkeletonUtils.clone(src.scene);
-  const jitter = opts.kind === 'michelle' ? 1 : 0.95 + Math.random() * 0.08;
-  const s = (1.72 / src.height) * jitter;
+  const isPlayer = opts.kind === 'michelle' || opts.player === true;
+  const jitter = isPlayer ? 1 : 0.95 + Math.random() * 0.08;
+  const s = (1.74 / src.height) * jitter;
   model.scale.setScalar(s);
   lean.add(model);
 
-  const isPlayer = opts.kind === 'michelle';
   const accent = opts.accent ?? opts.outfit ?? 0x35e0c8;
   const tint = new THREE.Color(opts.outfit ?? 0xffffff);
   const glowMat = new THREE.MeshStandardMaterial({
@@ -157,17 +200,20 @@ export function makeCharacter(opts = {}) {
     if (o.isMesh || o.isSkinnedMesh) {
       o.castShadow = true;
       o.frustumCulled = false;
-      if (o.material) {
-        o.material = o.material.clone();
-        if (!isPlayer && o.material.color) o.material.color.lerp(tint, 0.30);
-      }
+      const ms = Array.isArray(o.material) ? o.material : [o.material];
+      const cloned = ms.map(m => {
+        const c = m.clone();
+        if (!isPlayer && c.color) c.color.lerp(tint, 0.25);
+        return c;
+      });
+      o.material = Array.isArray(o.material) ? cloned : cloned[0];
     }
   });
 
   const bones = mapBones(model);
   const u = 1 / s;
 
-  // glowing rollerskates on the foot bones
+  // glowing rollerskates on the foot bones (sized in raw bone units)
   for (const key of ['leftfoot', 'rightfoot']) {
     const foot = bones[key];
     if (!foot) continue;
@@ -184,8 +230,8 @@ export function makeCharacter(opts = {}) {
     foot.add(g);
   }
 
-  // the skirts you loved — on most of the troupe, riding the hip bone
-  if (!isPlayer && bones.hips && (opts.dress ?? Math.random() < 0.65)) {
+  // skirts on most of the troupe, riding the hip bone
+  if (!isPlayer && bones.hips && (opts.dress ?? Math.random() < 0.6)) {
     const skirt = new THREE.Mesh(
       new THREE.ConeGeometry(0.30 * u, 0.40 * u, 14, 1, true),
       new THREE.MeshStandardMaterial({
@@ -199,15 +245,15 @@ export function makeCharacter(opts = {}) {
 
   const mixer = new THREE.AnimationMixer(model);
   const skate = mixer.clipAction(buildSkateClip(bones));
-  const idleClip = src.clips.find(c => /dance|idle/i.test(c.name)) ?? null;
-  const idle = idleClip ? mixer.clipAction(idleClip) : null;
+  // if the FBX shipped with a baked Mixamo clip, that's the idle
+  const native = (src.scene.animations ?? []).find(c => c.duration > 0.5);
+  const idleClip = native ?? buildIdleClip(bones);
+  const idle = mixer.clipAction(idleClip);
   skate.play();
+  idle.play();
   skate.setEffectiveWeight(0);
-  if (idle) {
-    idle.play();
-    idle.setEffectiveWeight(1);
-    idle.time = Math.random() * (idleClip.duration || 1);
-  }
+  idle.setEffectiveWeight(1);
+  idle.time = Math.random() * idleClip.duration;
 
   let lastT = null;
   function animate(t, speed, leanIn = 0, crouch = 0) {
@@ -215,7 +261,7 @@ export function makeCharacter(opts = {}) {
     lastT = t;
     const sp01 = THREE.MathUtils.clamp(speed / 7, 0, 1);
     skate.setEffectiveWeight(sp01);
-    if (idle) idle.setEffectiveWeight(1 - sp01);
+    idle.setEffectiveWeight(1 - sp01);
     skate.timeScale = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.8);
     mixer.update(dt);
     // post-mix body language: tuck and carve
@@ -226,5 +272,14 @@ export function makeCharacter(opts = {}) {
     lean.position.y = -crouch * 0.26;
   }
 
-  return { root, animate, kind: 'michelle' };
+  return {
+    root, animate, kind: 'hero',
+    _dbg: {
+      bones: Object.keys(bones),
+      idle: idleClip.name,
+      idleTracks: idleClip.tracks.slice(0, 3).map(tr => tr.name),
+      skateTracks: skate.getClip().tracks.length,
+      allBones: (() => { const n = []; model.traverse(o => { if (o.isBone && n.length < 12) n.push(o.name); }); return n; })(),
+    },
+  };
 }

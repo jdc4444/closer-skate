@@ -73,9 +73,9 @@ function makeBillboardTexture(word, fg, bg) {
   g.fillStyle = fg;
   g.shadowColor = fg;
   g.shadowBlur = 18;
-  g.font = 'italic bold 52px "Brush Script MT", "Snell Roundhand", cursive';
+  g.font = 'bold 44px Futura, "Avenir Next", "Century Gothic", sans-serif';
   g.textAlign = 'center';
-  g.fillText(word, 128, 82);
+  g.fillText(word, 128, 80);
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = THREE.RepeatWrapping;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -535,8 +535,8 @@ export class City {
       }
     }
     missing.sort((a, b) => a.d - b.d);
-    for (let i = 0; i < Math.min(2, missing.length); i++) {
-      this.chunks.set(missing[i].key, this.buildChunk(missing[i].cx, missing[i].cz));
+    if (missing.length) {
+      this.chunks.set(missing[0].key, this.buildChunk(missing[0].cx, missing[0].cz));
     }
     for (const [key, ch] of this.chunks) {
       const [cx, cz] = key.split(',').map(Number);
