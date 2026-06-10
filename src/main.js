@@ -241,6 +241,8 @@ let jumpQueued = false;
 window.addEventListener('keydown', (e) => {
   if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' '].includes(e.key)) e.preventDefault();
   if (!playing && (e.key === ' ' || e.key === 'Enter')) { startGame(); return; }
+  // a real hand on the keys always overrides the test autopilot
+  if (window.__auto) window.__auto = false;
   keys.add(e.key.toLowerCase());
   if (e.key === ' ') {
     if (!e.repeat) jumpQueued = true;
@@ -283,7 +285,8 @@ function steerInput() {
     if (z === 'left') s -= 1;
     if (z === 'right') s += 1;
   }
-  return THREE.MathUtils.clamp(s, -1, 1);
+  // negated so right means screen-right (heading math is left-handed on screen)
+  return -THREE.MathUtils.clamp(s, -1, 1);
 }
 const pushInput = () => keys.has('arrowup') || keys.has('w') || [...touches.values()].includes('push');
 const brakeInput = () => keys.has('arrowdown') || keys.has('s');
