@@ -90,38 +90,44 @@
   }
   #toast.show { opacity: 1; }
 
-  /* ---------- title screen (treatment cover homage) ---------- */
+  /* ---------- title screen: how to play ---------- */
   #title {
     position: fixed; inset: 0;
-    background: #fdfdfd;
-    color: #1a1a1a;
+    background: radial-gradient(ellipse at 50% 110%, #4a1d33 0%, #221030 55%, #140b1e 100%);
+    color: #f6e8d8;
     z-index: 40;
-    display: flex; align-items: center; justify-content: center;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
     transition: opacity 1.6s ease;
-    text-transform: none;
+    text-transform: uppercase;
   }
   #title.gone { opacity: 0; pointer-events: none; }
-  #sun {
-    width: min(42vmin, 380px); height: min(42vmin, 380px);
-    border-radius: 50%;
-    background: #fff;
-    box-shadow:
-      0 0 60px 30px rgba(255, 158, 64, 0.55),
-      0 0 140px 80px rgba(255, 158, 64, 0.28),
-      0 0 260px 150px rgba(255, 158, 64, 0.12);
-    animation: sunPulse 5s ease-in-out infinite;
-  }
-  @keyframes sunPulse {
-    0%, 100% { box-shadow: 0 0 60px 30px rgba(255,158,64,0.55), 0 0 140px 80px rgba(255,158,64,0.28), 0 0 260px 150px rgba(255,158,64,0.12); }
-    50%      { box-shadow: 0 0 70px 36px rgba(255,158,64,0.62), 0 0 160px 95px rgba(255,158,64,0.32), 0 0 300px 170px rgba(255,158,64,0.15); }
-  }
   .tcorner { position: absolute; font-size: 13px; letter-spacing: 0.28em; }
-  #tname  { top: 26px; left: 30px; font-weight: bold; }
+  #tname  { top: 26px; left: 30px; font-weight: bold; color: #ffd166; }
   #tright { top: 26px; right: 30px; opacity: 0.6; }
-  #tsub   { bottom: 26px; left: 30px; opacity: 0.85; }
-  #tcred  { bottom: 26px; right: 30px; opacity: 0.5; font-size: 11px; }
+  #howto {
+    max-width: 640px; width: 88%;
+    font-size: 13px; letter-spacing: 0.14em; line-height: 2.05;
+  }
+  #howto h2 {
+    font-size: 14px; letter-spacing: 0.5em; font-weight: normal;
+    color: #ffd166; margin-bottom: 18px; text-align: center;
+  }
+  #howto .goal {
+    text-align: center; margin-bottom: 26px; opacity: 0.95;
+    border-top: 1px solid rgba(246,232,216,0.25);
+    border-bottom: 1px solid rgba(246,232,216,0.25);
+    padding: 14px 0;
+  }
+  #howto .cols { display: flex; gap: 40px; justify-content: center; }
+  #howto .col { flex: 1; max-width: 280px; }
+  #howto .col h3 {
+    font-size: 11px; letter-spacing: 0.4em; font-weight: normal;
+    opacity: 0.6; margin-bottom: 8px;
+  }
+  #howto .k { color: #ffd166; }
   #tstart {
-    position: absolute; bottom: 16%; left: 50%;
+    position: absolute; bottom: 10%; left: 50%;
     transform: translateX(-50%);
     font-size: 13px; letter-spacing: 0.5em;
     animation: blink 1.8s ease-in-out infinite;
@@ -149,11 +155,35 @@
 
   <div id="title">
     <div id="tname"  class="tcorner">C L O S E R</div>
-    <div id="tright" class="tcorner">skate</div>
-    <div id="sun"></div>
-    <div id="tstart" class="tcorner">PRESS SPACE</div>
-    <div id="tsub"   class="tcorner">an infinite disco, on rollerskates</div>
-    <div id="tcred"  class="tcorner">after Art Camp&rsquo;s &ldquo;Hold Me Closer&rdquo;</div>
+    <div id="tright" class="tcorner">an infinite disco, on rollerskates</div>
+    <div id="howto">
+      <h2>HOW TO PLAY</h2>
+      <div class="goal">
+        Follow the lights &mdash; the searchlights mark tonight&rsquo;s party.<br />
+        Climb to the rooftop to complete the night.<br />
+        Skate close to lone skaters and they join your troupe.
+      </div>
+      <div class="cols">
+        <div class="col">
+          <h3>On your wheels</h3>
+          <span class="k">&larr; &rarr;</span> carve<br />
+          <span class="k">&uarr;</span> push &nbsp; <span class="k">&darr;</span> brake<br />
+          <span class="k">space</span> jump<br />
+          <span class="k">shift</span> tuck low
+        </div>
+        <div class="col">
+          <h3>In the air</h3>
+          <span class="k">hold space</span> glide<br />
+          <span class="k">w / s</span> tilt gravity fwd &amp; back<br />
+          <span class="k">a / d</span> roll gravity sideways<br />
+          <span class="k">shift</span> dive
+        </div>
+      </div>
+      <div style="text-align:center; margin-top:18px; opacity:0.6; font-size:11px;">
+        ride any wall or ceiling &mdash; gravity follows your wheels &middot; <span class="k">m</span> sound
+      </div>
+    </div>
+    <div id="tstart" class="tcorner">PRESS SPACE TO SKATE</div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

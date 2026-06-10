@@ -1,34 +1,37 @@
-// palettes.js — neon-noir nights. Era names keep the treatment's journey
-// through the decades; the city itself is dark glass and neon.
+// palettes.js — Miami, 1970-something. Pastel stucco and neon script,
+// coral sunsets over a lagoon-wet street. Era names still walk the decades.
 import * as THREE from 'three';
 
 export const ERAS = [
-  { name: 'THE BOARDWALK · 1972',
-    skyTop: 0x251244, horizon: 0xd86430, skyBelow: 0x2a0f08,
-    building: 0x33242a, glass: 0x221418, street: 0x1a1410,
-    trim: 0xff7a3d, neon2: 0xff4fa3, sign: 0xffd166,
-    lamp: 0xffc890, sun: 0xffa04a, ambient: 0x9a6a52, key: 0xd89a6a },
+  { name: 'OCEAN DRIVE · 1972',
+    skyTop: 0x2a1a5e, horizon: 0xff7e4f, skyBelow: 0x451834,
+    building: 0xf2e0d0, glass: 0x9fb8c8, street: 0x232a32,
+    trim: 0xff5fa2, neon2: 0x2ee6c8, sign: 0xffd166,
+    lamp: 0xffd9a0, sun: 0xffb36a, ambient: 0xc98a74, key: 0xe8a87a },
   { name: 'NEON AVENUE · 1982',
-    skyTop: 0x070918, horizon: 0x3a1668, skyBelow: 0x05040e,
-    building: 0x232136, glass: 0x121424, street: 0x131520,
+    skyTop: 0x1c1248, horizon: 0xd84f9e, skyBelow: 0x2a1040,
+    building: 0xead8e0, glass: 0x8aa8c0, street: 0x1f2630,
     trim: 0xff3df0, neon2: 0x00e5ff, sign: 0xffe14d,
-    lamp: 0xc8d8ff, sun: 0xd86aff, ambient: 0x4c5588, key: 0x8a9ae0 },
+    lamp: 0xe8d8ff, sun: 0xff8ad2, ambient: 0xa878a0, key: 0xc090c0 },
   { name: 'THE WHIRL · 1992',
-    skyTop: 0x060c22, horizon: 0x14367d, skyBelow: 0x04060f,
-    building: 0x1f2738, glass: 0x101828, street: 0x121724,
-    trim: 0x4fc8ff, neon2: 0xff5ad8, sign: 0x9fffcf,
-    lamp: 0xbfe0ff, sun: 0x8ab8ff, ambient: 0x44588c, key: 0x7e9ad8 },
+    skyTop: 0x142457, horizon: 0xe87a6a, skyBelow: 0x301438,
+    building: 0xe2ece4, glass: 0x90b8b8, street: 0x202a30,
+    trim: 0x2ee6c8, neon2: 0xff5fa2, sign: 0xfff2b8,
+    lamp: 0xcfe8e0, sun: 0xffc28a, ambient: 0x9a8a88, key: 0xc0a890 },
   { name: 'MIDNIGHT CLUB · 2002',
-    skyTop: 0x04100f, horizon: 0x0c4a44, skyBelow: 0x030a09,
-    building: 0x1c2a2a, glass: 0x0f1a1a, street: 0x101a19,
-    trim: 0x3df2d8, neon2: 0xff6a86, sign: 0xe2f4ff,
-    lamp: 0xd2fff2, sun: 0x5ee8d0, ambient: 0x3a6660, key: 0x74b0a6 },
+    skyTop: 0x0c1440, horizon: 0xb04a7e, skyBelow: 0x1c0e30,
+    building: 0xd8d8e8, glass: 0x7898b8, street: 0x1b222c,
+    trim: 0xff7eb8, neon2: 0x4fd8e8, sign: 0xe8f2ff,
+    lamp: 0xd8e0ff, sun: 0xe88ab8, ambient: 0x8878a0, key: 0xa890c0 },
   { name: 'THE BALLROOM · 2012',
-    skyTop: 0x1c0e2e, horizon: 0xb04a2e, skyBelow: 0x1c0a08,
-    building: 0x342630, glass: 0x201418, street: 0x191412,
-    trim: 0xffd166, neon2: 0xff8fb8, sign: 0xff5aa8,
-    lamp: 0xffe2a8, sun: 0xffb86a, ambient: 0x8a6258, key: 0xc89a78 },
+    skyTop: 0x241445, horizon: 0xe8743e, skyBelow: 0x3a1428,
+    building: 0xf4e4cc, glass: 0xa8b8b0, street: 0x252a2e,
+    trim: 0xffd166, neon2: 0xff8fb8, sign: 0xff5fa2,
+    lamp: 0xffe2a8, sun: 0xffc06a, ambient: 0xc4927a, key: 0xe0a882 },
 ];
+
+// the stucco rainbow — every building picks its own, regardless of the night
+export const STUCCOS = [0xf2c4c4, 0xf7d9b8, 0xcfe8d8, 0xbfe4e0, 0xf2e8d8, 0xddd0ec, 0xf7c9a8, 0xc8e0f0];
 
 export function eraPalette(i) { return ERAS[((i % ERAS.length) + ERAS.length) % ERAS.length]; }
 

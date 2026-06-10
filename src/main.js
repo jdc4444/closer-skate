@@ -33,7 +33,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x551b38, 26, 310);
+scene.fog = new THREE.Fog(0xff7e4f, 26, 255);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1600);
 
@@ -56,6 +56,7 @@ dirLight.shadow.camera.bottom = -90;
 dirLight.shadow.camera.near = 1;
 dirLight.shadow.camera.far = 320;
 dirLight.shadow.bias = -0.0004;
+dirLight.shadow.normalBias = 0.6;
 scene.add(dirLight);
 scene.add(dirLight.target);
 const LIGHT_OFF = new THREE.Vector3(34, 80, -28);
@@ -100,15 +101,15 @@ scene.environment = envFor(0);
 // the wet street: a true mirror plane gliding under the city
 const mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
   clipBias: 0.003,
-  textureWidth: 512,
-  textureHeight: 512,
-  color: 0x3a4150,
+  textureWidth: 1024,
+  textureHeight: 1024,
+  color: 0x46525a,
 });
 mirror.rotation.x = -Math.PI / 2;
 mirror.position.y = 0.02;
 scene.add(mirror);
 
-const city = new City(scene);
+const city = new City(scene, renderer.capabilities.getMaxAnisotropy());
 const sky = new Sky(scene);
 const audio = new DiscoAudio();
 
@@ -277,10 +278,11 @@ window.addEventListener('pointerup', (e) => {
   if (zone === 'mid' && ![...touches.values()].includes('mid')) spaceDown = false;
 });
 
+// arrows skate; WASD sculpts gravity in the air
 function steerInput() {
   let s = 0;
-  if (keys.has('arrowleft') || keys.has('a')) s -= 1;
-  if (keys.has('arrowright') || keys.has('d')) s += 1;
+  if (keys.has('arrowleft')) s -= 1;
+  if (keys.has('arrowright')) s += 1;
   for (const z of touches.values()) {
     if (z === 'left') s -= 1;
     if (z === 'right') s += 1;
@@ -288,8 +290,8 @@ function steerInput() {
   // negated so right means screen-right (heading math is left-handed on screen)
   return -THREE.MathUtils.clamp(s, -1, 1);
 }
-const pushInput = () => keys.has('arrowup') || keys.has('w') || [...touches.values()].includes('push');
-const brakeInput = () => keys.has('arrowdown') || keys.has('s');
+const pushInput = () => keys.has('arrowup') || [...touches.values()].includes('push');
+const brakeInput = () => keys.has('arrowdown');
 const tuckInput = () => keys.has('shift');
 
 function startGame() {
@@ -432,13 +434,11 @@ function updatePlayer(dt) {
     if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
     if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
 
-    // gravity sculpting: in the air, ↑/↓ pitch your personal "down" —
-    // tilt forward into a facade and land on it feet-first; tilt all the
-    // way over and fall up onto an underside. Release to settle onto the
-    // nearest plane.
-    const pitchIn = playing
-      ? ((keys.has('arrowup') || keys.has('w')) ? 1 : 0) - ((keys.has('arrowdown') || keys.has('s')) ? 1 : 0)
-      : 0;
+    // gravity sculpting: in the air, W/S pitch your personal "down" forward
+    // and back, A/D roll it sideways — land feet-first on facades and
+    // undersides. Release to settle onto the nearest plane.
+    const pitchIn = playing ? (keys.has('w') ? 1 : 0) - (keys.has('s') ? 1 : 0) : 0;
+    const rollIn = playing ? (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0) : 0;
     if (pitchIn !== 0) {
       // pitch around the body's own right axis — facing stays the reference
       _right.crossVectors(player.f, player.gravN);
@@ -448,7 +448,13 @@ function updatePlayer(dt) {
         player.gravN.applyQuaternion(_quat).normalize();
         player.f.applyQuaternion(_quat);
       }
-    } else if (playing) {
+    }
+    if (rollIn !== 0) {
+      // roll around the facing axis — the world tips sideways under you
+      _quat.setFromAxisAngle(player.f, rollIn * 1.7 * dt);
+      player.gravN.applyQuaternion(_quat).normalize();
+    }
+    if (playing && pitchIn === 0 && rollIn === 0) {
       const a = SURF.axisOf(player.gravN);
       const sgn = SURF.comp(player.gravN, a) >= 0 ? 1 : -1;
       _t2.set(0, 0, 0).setComponent(a, sgn);

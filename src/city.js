@@ -5,7 +5,7 @@
 // one golden venue on the horizon: tonight's destination.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { eraPalette } from './palettes.js';
+import { eraPalette, STUCCOS } from './palettes.js';
 import { makeCharacter } from './avatars.js';
 
 export const CHUNK = 96;
@@ -15,7 +15,9 @@ const BLOCK0 = ROAD + 4;  // block (buildable) region inset
 const RECRUIT_COLORS = [0x35e0c8, 0xffd166, 0xff7a5a, 0xc79bff, 0x9fffcf, 0xff4f6e, 0x8ad9ff, 0xffb6f2];
 const RECRUIT_NAMES = ['TINY', 'BENNIE', 'LEVON', 'NIKITA', 'DANIEL', 'ROCKET', 'PHILLY', 'AMY',
   'JOHNNY', 'SUSIE', 'JACKIE', 'STARLIGHT', 'RAY', 'IDA', 'MONA', 'JETS'];
-const SIGN_WORDS = ['CLOSER', 'DISCO', 'SKATE', 'ホールド', '夜', 'NEON', 'クローサー', 'ALL NIGHT', '24H', 'ローラー'];
+const SIGN_WORDS = ['FLAMINGO', 'OCEAN', 'TROPICANA', 'PARADISE', 'STARLITE', 'EL REY',
+  'COCKTAILS', 'MOTEL', 'CABANA', 'DISCO', 'ROLLER', 'SUNSET', 'CLOSER'];
+const CAR_COLORS = [0xf2b8c6, 0x7fd4c1, 0xf7e3b5, 0xc9b8f0, 0xff8a5c, 0xfaf2e0];
 
 function makeWindowTexture(neonHex) {
   const c = document.createElement('canvas');
@@ -47,12 +49,12 @@ function makeSignTexture(word, colorHex) {
   const c = document.createElement('canvas');
   c.width = 64; c.height = 256;
   const g = c.getContext('2d');
-  g.fillStyle = '#0a0a12';
+  g.fillStyle = '#141018';
   g.fillRect(0, 0, 64, 256);
   g.fillStyle = colorHex;
   g.shadowColor = colorHex;
   g.shadowBlur = 14;
-  g.font = 'bold 38px "Courier New", monospace';
+  g.font = 'bold 34px Futura, "Avenir Next", "Century Gothic", sans-serif';
   g.textAlign = 'center';
   const chars = word.split('');
   const step = Math.min(44, 236 / chars.length);
@@ -71,7 +73,7 @@ function makeBillboardTexture(word, fg, bg) {
   g.fillStyle = fg;
   g.shadowColor = fg;
   g.shadowBlur = 18;
-  g.font = 'bold 54px "Courier New", monospace';
+  g.font = 'italic bold 52px "Brush Script MT", "Snell Roundhand", cursive';
   g.textAlign = 'center';
   g.fillText(word, 128, 82);
   const tex = new THREE.CanvasTexture(c);
@@ -96,8 +98,9 @@ function makeGlowSprite() {
 }
 
 export class City {
-  constructor(scene) {
+  constructor(scene, maxAniso = 4) {
     this.scene = scene;
+    this.maxAniso = maxAniso;
     this.matCache = new Map();
     this.texCache = new Map();
     this.glowTex = makeGlowSprite();
@@ -113,6 +116,18 @@ export class City {
     this.beacon = null;
     this._boxCache = { key: '', boxes: [] };
     this._m = new THREE.Matrix4();
+
+    // marquee chase-lights: a string of bulbs running from you to the party
+    this.partyLights = [];
+    for (let i = 0; i < 9; i++) {
+      const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: this.glowTex, color: 0xffd166, transparent: true,
+        opacity: 0, depthWrite: false,
+      }));
+      spr.scale.setScalar(2.4);
+      scene.add(spr);
+      this.partyLights.push(spr);
+    }
 
     // flying traffic, ambient
     this.flyers = [];
@@ -180,6 +195,14 @@ export class City {
           emissive: 0xffc46a, emissiveIntensity: 0.6 }),
         vendFront: new THREE.MeshBasicMaterial({ color: p.neon2 }),
         hydrant: new THREE.MeshStandardMaterial({ color: 0xb03038, roughness: 0.6 }),
+        stripeA: new THREE.MeshStandardMaterial({
+          color: p.trim, roughness: 0.5, emissive: p.trim, emissiveIntensity: 0.45 }),
+        stripeB: new THREE.MeshStandardMaterial({
+          color: p.neon2, roughness: 0.5, emissive: p.neon2, emissiveIntensity: 0.45 }),
+        trunk: new THREE.MeshStandardMaterial({ color: 0x7a5c40, roughness: 0.9 }),
+        frond: new THREE.MeshStandardMaterial({ color: 0x2e7d52, roughness: 0.8 }),
+        chrome: new THREE.MeshStandardMaterial({
+          color: 0xd8dde2, roughness: 0.18, metalness: 0.9, envMapIntensity: 1.2 }),
       });
     }
     return this.matCache.get(key);
@@ -187,20 +210,24 @@ export class City {
 
   glassMat(M, variant) {
     const p = M.palette;
-    const m = new THREE.MeshStandardMaterial({
-      color: p.glass, roughness: 0.16, metalness: 0.85,
-      emissive: 0xffffff, emissiveMap: M.winTex[variant % 3].clone(),
-      emissiveIntensity: 0.95, envMapIntensity: 1.3,
+    const tex = M.winTex[variant % 3].clone();
+    tex.anisotropy = this.maxAniso;
+    return new THREE.MeshStandardMaterial({
+      color: p.glass, roughness: 0.22, metalness: 0.7,
+      emissive: 0xffffff, emissiveMap: tex,
+      emissiveIntensity: 0.8, envMapIntensity: 1.1,
     });
-    return m;
   }
-  concreteWinMat(M, variant) {
-    const m = new THREE.MeshStandardMaterial({
-      color: M.palette.building, roughness: 0.8, metalness: 0.05,
-      emissive: 0xffffff, emissiveMap: M.winTex[variant % 3].clone(),
-      emissiveIntensity: 0.6,
+  // pastel deco stucco, windows glowing warm in the dusk
+  stuccoMat(M, variant, stucco) {
+    const tex = M.winTex[variant % 3].clone();
+    tex.anisotropy = this.maxAniso;
+    return new THREE.MeshStandardMaterial({
+      color: new THREE.Color(stucco).lerp(new THREE.Color(M.palette.building), 0.3),
+      roughness: 0.85, metalness: 0.02,
+      emissive: 0xffffff, emissiveMap: tex,
+      emissiveIntensity: 0.5,
     });
-    return m;
   }
 
   // -------------------------------------------------------------- builders
@@ -208,27 +235,63 @@ export class City {
     chunk.boxes.push({ min: min.clone(), max: max.clone() });
   }
 
-  // a tier of a tower: glass/concrete slab with windows, edges, collider
-  tierBox(chunk, M, x, z, w, d, y0, h, rng) {
+  // a tier of a tower: pastel stucco (or rare glass) with windows, neon
+  // edge outline, deco racing stripes, collider
+  tierBox(chunk, M, x, z, w, d, y0, h, rng, stucco) {
     const variant = Math.floor(rng() * 3);
-    const isGlass = rng() < 0.6;
-    const mat = isGlass ? this.glassMat(M, variant) : this.concreteWinMat(M, variant);
+    const isGlass = rng() < 0.22;
+    const mat = isGlass ? this.glassMat(M, variant) : this.stuccoMat(M, variant, stucco);
     mat.emissiveMap.repeat.set(Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(h / 9)));
     const geo = new THREE.BoxGeometry(w, h, d);
     const roof = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(M.palette.building).multiplyScalar(0.8), roughness: 0.9 });
+      color: new THREE.Color(stucco).multiplyScalar(0.55), roughness: 0.9 });
     const mesh = new THREE.Mesh(geo, [mat, mat, roof, roof, mat, mat]);
     mesh.position.set(x + w / 2, y0 + h / 2, z + d / 2);
     mesh.castShadow = mesh.receiveShadow = true;
     chunk.group.add(mesh);
-    const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), rng() < 0.4 ? M.edge : M.edgeSoft);
+    const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), rng() < 0.7 ? M.edge : M.edgeSoft);
     line.position.copy(mesh.position);
     chunk.group.add(line);
+    // deco speed stripes wrapping the facade
+    const stripes = h > 14 ? 1 + Math.floor(rng() * 2) : rng() < 0.5 ? 1 : 0;
+    for (let s = 0; s < stripes; s++) {
+      const sy = y0 + h * (0.25 + rng() * 0.6);
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(w + 0.12, 0.5, d + 0.12),
+        rng() < 0.5 ? M.stripeA : M.stripeB);
+      stripe.position.set(x + w / 2, sy, z + d / 2);
+      chunk.group.add(stripe);
+    }
     this.collider(chunk,
       new THREE.Vector3(x, y0, z), new THREE.Vector3(x + w, y0 + h, z + d));
   }
 
+  // a Miami palm: leaning trunk, drooping fronds
+  palm(chunk, M, x, z, rng) {
+    const g = new THREE.Group();
+    const h = 5.5 + rng() * 4;
+    const lean = (rng() - 0.5) * 0.3;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.2, h, 6), M.trunk);
+    trunk.position.y = h / 2;
+    trunk.rotation.z = lean;
+    trunk.castShadow = true;
+    g.add(trunk);
+    const topX = Math.sin(lean) * -h * 0.95;
+    for (let i = 0; i < 7; i++) {
+      const frond = new THREE.Mesh(new THREE.ConeGeometry(0.5, 3.4, 4, 1), M.frond);
+      const ang = (i / 7) * Math.PI * 2 + rng();
+      frond.position.set(topX, h * 0.97, 0);
+      frond.rotation.order = 'YXZ';
+      frond.rotation.y = ang;
+      frond.rotation.x = 1.85 + rng() * 0.25;
+      g.add(frond);
+    }
+    g.position.set(x, 0, z);
+    chunk.group.add(g);
+  }
+
   tower(chunk, M, x, z, w, d, h, rng) {
+    const stucco = STUCCOS[Math.floor(rng() * STUCCOS.length)];
     // stacked tiers with setback terraces — ledges at every altitude
     let tiers;
     if (h > 80) tiers = [0.45, 0.32, 0.23];
@@ -238,7 +301,7 @@ export class City {
     const terraces = [];
     for (const frac of tiers) {
       const th = h * frac;
-      this.tierBox(chunk, M, tx, tz, tw, td, y0, th, rng);
+      this.tierBox(chunk, M, tx, tz, tw, td, y0, th, rng, stucco);
       y0 += th;
       terraces.push({ x: tx, z: tz, w: tw, d: td, top: y0 });
       const shrink = 0.72 + rng() * 0.12;
@@ -401,16 +464,23 @@ export class City {
   }
 
   makeCar(M, rng) {
+    // a long pastel land-yacht with chrome bumpers
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.52, 4.3),
-      new THREE.MeshStandardMaterial({ color: 0x171a22, roughness: 0.25, metalness: 0.8, envMapIntensity: 1.2 }));
+    const col = CAR_COLORS[Math.floor(rng() * CAR_COLORS.length)];
+    const body = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.5, 4.9),
+      new THREE.MeshStandardMaterial({ color: col, roughness: 0.32, metalness: 0.25, envMapIntensity: 0.9 }));
     body.position.y = 0.55;
     body.castShadow = true;
     g.add(body);
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.42, 2.0),
-      new THREE.MeshStandardMaterial({ color: 0x0c0e16, roughness: 0.1, metalness: 0.9, envMapIntensity: 1.4 }));
-    cab.position.set(0, 0.95, -0.2);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.4, 2.0),
+      new THREE.MeshStandardMaterial({ color: 0x18222a, roughness: 0.12, metalness: 0.85, envMapIntensity: 1.3 }));
+    cab.position.set(0, 0.93, -0.3);
     g.add(cab);
+    for (const bz of [2.5, -2.5]) {
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.16, 0.22), M.chrome);
+      bumper.position.set(0, 0.42, bz);
+      g.add(bumper);
+    }
     for (const sx of [-0.85, 0.85]) {
       for (const sz of [-1.4, 1.4]) {
         const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.24, 10), M.metal);
@@ -432,7 +502,7 @@ export class City {
     hs.scale.setScalar(2.4);
     hs.position.set(0, 0.6, 2.5);
     g.add(hs);
-    if (rng() < 0.5) {
+    if (rng() < 0.15) {
       const under = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 4.4),
         new THREE.MeshBasicMaterial({
           color: rng() < 0.5 ? M.palette.trim : M.palette.neon2,
@@ -447,15 +517,30 @@ export class City {
   // -------------------------------------------------------------- chunks
   ensure(p) {
     const ccx = Math.floor(p.x / CHUNK), ccz = Math.floor(p.z / CHUNK);
-    for (let dx = -2; dx <= 2; dx++) {
-      for (let dz = -2; dz <= 2; dz++) {
+    // the 3x3 around the skater must exist immediately (physics lives here)
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
         const key = `${ccx + dx},${ccz + dz}`;
         if (!this.chunks.has(key)) this.chunks.set(key, this.buildChunk(ccx + dx, ccz + dz));
       }
     }
+    // the rest streams in a couple of chunks per frame, nearest first,
+    // far enough out that the fog hides the seam
+    const missing = [];
+    for (let dx = -3; dx <= 3; dx++) {
+      for (let dz = -3; dz <= 3; dz++) {
+        if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) continue;
+        const key = `${ccx + dx},${ccz + dz}`;
+        if (!this.chunks.has(key)) missing.push({ key, cx: ccx + dx, cz: ccz + dz, d: dx * dx + dz * dz });
+      }
+    }
+    missing.sort((a, b) => a.d - b.d);
+    for (let i = 0; i < Math.min(2, missing.length); i++) {
+      this.chunks.set(missing[i].key, this.buildChunk(missing[i].cx, missing[i].cz));
+    }
     for (const [key, ch] of this.chunks) {
       const [cx, cz] = key.split(',').map(Number);
-      if (Math.abs(cx - ccx) > 3 || Math.abs(cz - ccz) > 3) {
+      if (Math.abs(cx - ccx) > 4 || Math.abs(cz - ccz) > 4) {
         this.disposeChunk(ch);
         this.chunks.delete(key);
       }
@@ -795,6 +880,16 @@ export class City {
       this.cars.push(car);
     }
 
+    // palms along the sidewalks — Miami breathes
+    const palmN = 3 + Math.floor(rng() * 4);
+    for (let i = 0; i < palmN; i++) {
+      if (rng() < 0.5) {
+        this.palm(chunk, M, x0 + BLOCK0 + 2 + rng() * (CHUNK - BLOCK0 - 6), z0 + BLOCK0 - 1.8, rng);
+      } else {
+        this.palm(chunk, M, x0 + BLOCK0 - 1.8, z0 + BLOCK0 + 2 + rng() * (CHUNK - BLOCK0 - 6), rng);
+      }
+    }
+
     // a lone skater waiting for a troupe
     if (rng() < 0.5) {
       const color = RECRUIT_COLORS[this.recruitCounter % RECRUIT_COLORS.length];
@@ -929,8 +1024,21 @@ export class City {
     halo.rotation.x = Math.PI / 2;
     halo.position.set(pos.x, H + 5, pos.z);
     group.add(halo);
+    // party searchlights sweeping the sky — you can see where it is from anywhere
+    const lights = new THREE.Group();
+    for (const s of [-1, 1]) {
+      const geo = new THREE.ConeGeometry(3.4, 110, 12, 1, true);
+      geo.rotateX(Math.PI);
+      geo.translate(0, 55, 0);
+      const beamCone = new THREE.Mesh(geo, M.beam.clone());
+      beamCone.material.opacity = 0.15;
+      beamCone.rotation.z = s * 0.8;
+      lights.add(beamCone);
+    }
+    lights.position.set(pos.x, H + 1, pos.z);
+    group.add(lights);
     this.scene.add(group);
-    this.beacon = { pos: pos.clone(), group, boxes, halo, beam, topY: H };
+    this.beacon = { pos: pos.clone(), group, boxes, halo, beam, lights, topY: H };
   }
 
   clearBeacon() {
@@ -948,6 +1056,26 @@ export class City {
     if (this.beacon) {
       this.beacon.halo.rotation.z += dt * 0.4;
       this.beacon.beam.material.opacity = 0.27 + Math.sin(t * 1.7) * 0.06;
+      this.beacon.lights.rotation.y += dt * 0.7;
+      this.beacon.lights.children[0].rotation.z = -0.8 + Math.sin(t * 0.5) * 0.25;
+      this.beacon.lights.children[1].rotation.z = 0.8 - Math.sin(t * 0.43) * 0.25;
+    }
+    // chase-lights pulse toward the venue
+    if (playerP && this.beacon) {
+      const bx = this.beacon.pos.x - playerP.x, bz = this.beacon.pos.z - playerP.z;
+      const bd = Math.hypot(bx, bz) || 1;
+      const ux = bx / bd, uz = bz / bd;
+      for (let i = 0; i < this.partyLights.length; i++) {
+        const spr = this.partyLights[i];
+        const along = 16 + i * 21;
+        if (along > bd - 20) { spr.material.opacity = 0; continue; }
+        spr.position.set(playerP.x + ux * along, 11 + Math.sin(i * 1.7) * 1.5, playerP.z + uz * along);
+        const pulse = Math.pow(Math.max(0, Math.sin(t * 3.4 - i * 0.85)), 3);
+        spr.material.opacity = 0.14 + pulse * 0.5;
+        spr.scale.setScalar(1.7 + pulse * 1.6);
+      }
+    } else {
+      for (const spr of this.partyLights) spr.material.opacity = 0;
     }
     for (const rec of this.recruits) {
       const a = t * 0.9 + rec.phase;

@@ -3,6 +3,8 @@
 // the whole sky: the disorientation is the point.
 import * as THREE from 'three';
 
+const _white = new THREE.Color(0xffffff);
+
 export class Sky {
   constructor(scene) {
     this.uniforms = {
@@ -119,6 +121,7 @@ export class Sky {
     this.sun.position.set(playerPos.x, 4, playerPos.z + 640);
 
     for (const c of this.clouds) {
+      c.material.color.copy(atm.sun).lerp(_white, 0.45);
       c.position.x += c.userData.drift * dt;
       if (c.position.z < playerPos.z - 380) c.position.z += 760;
       if (c.position.z > playerPos.z + 380) c.position.z -= 760;
