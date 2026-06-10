@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Reflector } from 'three/addons/objects/Reflector.js';
 import { nightLabel, venueName, blendedAtmosphere, eraPalette } from './palettes.js';
@@ -39,8 +40,13 @@ const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerH
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
+// the composer bypasses MSAA entirely — SMAA brings the edges back
+const smaa = new SMAAPass(
+  window.innerWidth * renderer.getPixelRatio(),
+  window.innerHeight * renderer.getPixelRatio());
+composer.addPass(smaa);
 const bloom = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.55, 0.6, 0.72);
+  new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.55, 0.78);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
@@ -349,11 +355,17 @@ function signedAngle(a, b, up) {
   return Math.atan2(_t3.dot(up), a.dot(b));
 }
 
-function poseRig(rig, p, n, f) {
+const _poseQuat = new THREE.Quaternion();
+function poseRig(rig, p, n, f, alpha = 1) {
   rig.root.position.copy(p);
   _right.crossVectors(n, f).normalize();
   _mtx.makeBasis(_right, n, f);
-  rig.root.quaternion.setFromRotationMatrix(_mtx);
+  if (alpha >= 1) {
+    rig.root.quaternion.setFromRotationMatrix(_mtx);
+  } else {
+    _poseQuat.setFromRotationMatrix(_mtx);
+    rig.root.quaternion.slerp(_poseQuat, alpha);
+  }
 }
 
 function respawn() {
@@ -590,7 +602,9 @@ function updatePlayer(dt) {
   player.invulnT = Math.max(0, player.invulnT - dt);
   player.boostPulse = Math.max(0, player.boostPulse - dt * 1.4);
 
-  poseRig(player.rig, player.p, player.n, player.f);
+  // the body eases toward its physics orientation — wraps, climbs and
+  // gravity snaps no longer jolt the limbs around
+  poseRig(player.rig, player.p, player.n, player.f, 1 - Math.exp(-16 * dt));
   player.rig.animate(elapsed, player.grounded ? player.v : 4, steer + wobble, player.tuck);
 
   if (playing && player.v > 3) {

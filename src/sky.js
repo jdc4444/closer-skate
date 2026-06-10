@@ -97,21 +97,6 @@ export class Sky {
       this.clouds.push(sp);
     }
 
-    // drifting dust motes for haze sparkle
-    const N = 420;
-    const pos = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 90;
-      pos[i * 3 + 1] = Math.random() * 50 - 10;
-      pos[i * 3 + 2] = Math.random() * 500 - 80;
-    }
-    const dg = new THREE.BufferGeometry();
-    dg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    this.dust = new THREE.Points(dg, new THREE.PointsMaterial({
-      color: 0xffffff, size: 0.5, transparent: true, opacity: 0.3,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    scene.add(this.dust);
   }
 
   update(dt, camPos, playerPos, atm) {
@@ -130,14 +115,5 @@ export class Sky {
       if (c.position.x < playerPos.x - 420) c.position.x += 840;
       if (c.position.x > playerPos.x + 420) c.position.x -= 840;
     }
-    const dp = this.dust.geometry.attributes.position;
-    for (let i = 0; i < dp.count; i++) {
-      const z = dp.getZ(i), x = dp.getX(i);
-      if (z < playerPos.z - 270) dp.setZ(i, z + 540);
-      else if (z > playerPos.z + 270) dp.setZ(i, z - 540);
-      if (x < playerPos.x - 270) dp.setX(i, x + 540);
-      else if (x > playerPos.x + 270) dp.setX(i, x - 540);
-    }
-    dp.needsUpdate = true;
   }
 }
