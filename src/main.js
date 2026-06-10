@@ -11,22 +11,22 @@ import { DiscoAudio } from './audio.js';
 
 // ---------------------------------------------------------------- setup
 const app = document.getElementById('app');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
+renderer.toneMappingExposure = 1.22;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x47102b);
-scene.fog = new THREE.Fog(0x47102b, 26, 300);
+scene.background = new THREE.Color(0x7d2746);
+scene.fog = new THREE.Fog(0x7d2746, 16, 250);
 
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 900);
 
-const ambient = new THREE.AmbientLight(0xff9a66, 1.25);
+const ambient = new THREE.AmbientLight(0xffb38a, 2.1);
 scene.add(ambient);
-const sunLight = new THREE.DirectionalLight(0xffc890, 1.4);
+const sunLight = new THREE.DirectionalLight(0xffd9a8, 2.0);
 scene.add(sunLight);
 scene.add(sunLight.target);
 
@@ -252,11 +252,12 @@ function updatePlayer(dt) {
   const steer = playing ? steerInput() : 0;
   const wobble = player.stumbleT > 0 ? Math.sin(elapsed * 24) * 0.7 : 0;
 
-  // autopilot before the game starts (attract mode behind the title)
-  if (!playing) {
-    const err = angWrap(corridorTheta(player.z + 10) - player.theta);
-    player.psi += (THREE.MathUtils.clamp(err * 2.2, -0.9, 0.9) - player.psi) * Math.min(1, dt * 2);
-    player.v += (13 - player.v) * Math.min(1, dt);
+  // autopilot before the game starts (attract mode behind the title);
+  // window.__auto keeps it on while playing, for automated testing
+  if (!playing || window.__auto) {
+    const err = angWrap(corridorTheta(player.z + 6 + player.v * 0.25) - player.theta);
+    player.psi += (THREE.MathUtils.clamp(err * 3, -0.95, 0.95) - player.psi) * Math.min(1, dt * 2.6);
+    player.v += ((playing ? 24 : 13) - player.v) * Math.min(1, dt);
   } else {
     const steerRate = (1.7 + player.v * 0.012) * (player.onGround ? 1 : 0.55) * (player.stumbleT > 0 ? 0.4 : 1);
     player.psi += steer * steerRate * dt;
@@ -293,7 +294,7 @@ function updatePlayer(dt) {
   const g = world.groundHeight(player.theta, player.z);
   if (player.onGround) {
     if (g > player.h + 0.6) {
-      hitWall(prevTheta, prevZ);
+      resolveWall(prevTheta, prevZ);
     } else if (g >= player.h - 0.25) {
       player.h = g;
     } else {
@@ -302,7 +303,7 @@ function updatePlayer(dt) {
     }
   } else {
     if (player.h < g - 0.45 && player.vh <= 0.01 && g > 0.5) {
-      hitWall(prevTheta, prevZ);
+      resolveWall(prevTheta, prevZ);
       player.vh = Math.min(player.vh, 0);
     } else if (player.vh <= 0 && player.h <= g) {
       player.h = g;
@@ -352,9 +353,16 @@ function updatePlayer(dt) {
   }
 }
 
-function hitWall(prevTheta, prevZ) {
-  player.theta = prevTheta;
-  player.z = prevZ;
+// slide along whichever axis stays clear; full revert only in corners
+function resolveWall(prevTheta, prevZ) {
+  if (world.groundHeight(player.theta, prevZ) <= player.h + 0.6) {
+    player.z = prevZ;
+  } else if (world.groundHeight(prevTheta, player.z) <= player.h + 0.6) {
+    player.theta = prevTheta;
+  } else {
+    player.theta = prevTheta;
+    player.z = prevZ;
+  }
   if (player.invulnT > 0) return;
   player.v = Math.max(8, player.v * 0.45);
   player.stumbleT = 0.9;
@@ -373,7 +381,9 @@ function updatePack(dt) {
   if (!members.length) return;
   const leader = members[0];
 
-  if (mode === 'follow' && playing && player.z > leader.z + 4) {
+  // you only take the lead clean — not mid-stumble while the pack regroups
+  if (mode === 'follow' && playing && player.z > leader.z + 6 &&
+      player.invulnT <= 0 && player.stumbleT <= 0) {
     mode = 'leading';
     toast('YOU LEAD THE NIGHT', 2.0);
     audio.link();
@@ -390,10 +400,22 @@ function updatePack(dt) {
       zT = player.z - 8 - i * 6;
       thT = pathTheta(zT);
     } else if (i === 0) {
+      // rubber band, asymmetric: the tail skater hovers at linking range;
+      // the leader holds pace when you close in (so a hard push can pass),
+      // waits or skates back when you fall behind, and sweeps past to
+      // retake the front after you crash out of the lead
       const lead = leader.z - player.z;
-      const vL = THREE.MathUtils.clamp(player.v + (30 - lead) * 0.35, 6, 44);
+      const ideal = 14 + (members.length - 1) * 6;
+      let vL;
+      if (lead < 0) {
+        vL = Math.max(player.v + 7, 30);
+      } else if (lead < ideal) {
+        vL = Math.min(26, player.v * 0.92 + 2);
+      } else {
+        vL = THREE.MathUtils.clamp(player.v + (ideal - lead) * 0.5, lead > 80 ? -9 : 0, 40);
+      }
       m.z += vL * dt;
-      m.speed = vL;
+      m.speed = Math.abs(vL);
       zT = m.z;
       thT = corridorTheta(m.z);
     } else {
@@ -445,7 +467,7 @@ function updatePack(dt) {
   const d = Math.hypot(dz, darc);
 
   if (playing && mode === 'follow') {
-    if (d < 14) {
+    if (d < 18) {
       linkTimer += dt;
       if (!linked && linkTimer > 0.8) {
         linked = true;
@@ -454,7 +476,7 @@ function updatePack(dt) {
       }
     } else {
       linkTimer = 0;
-      if (linked && d > 22) {
+      if (linked && d > 26) {
         linked = false;
         audio.unlink();
       }
@@ -555,9 +577,23 @@ function updateHud(d) {
 // ---------------------------------------------------------------- loop
 addMember(ROSTER[rosterNext++], 34);
 
+// hooks for automated testing (harmless in normal play)
+window.__test = {
+  push: (dv = 25) => { player.v = Math.min(46, player.v + dv); },
+  jump: () => { if (player.onGround) { player.vh = 10.5; player.onGround = false; } },
+  trip: () => resolveWall(player.theta, player.z),
+  warp: (dz = 30) => { player.z += dz; player.theta = corridorTheta(player.z); },
+};
+
 const clock = new THREE.Clock();
 function frame() {
   requestAnimationFrame(frame);
+  step();
+}
+// rAF stops in hidden tabs; keep the night rolling regardless
+setInterval(() => { if (document.hidden) step(); }, 50);
+
+function step() {
   const dt = Math.min(0.034, clock.getDelta());
   elapsed += dt;
 
@@ -579,6 +615,7 @@ function frame() {
     playing, z: player.z, theta: player.theta, psi: player.psi, v: player.v,
     h: player.h, onGround: player.onGround, mode, linked, flow: Math.floor(flow),
     era: eraIndex(player.z), pack: members.length, packDist: d,
+    leadGap: members[0] ? +(members[0].z - player.z).toFixed(1) : null,
   };
 
   renderer.render(scene, camera);

@@ -5,21 +5,21 @@ import * as THREE from 'three';
 export const R = 70;            // cylinder radius (you skate the inside)
 export const SEG_LEN = 40;      // length of one generated city segment
 export const ERA_LEN = 400;     // metres per era
-const CORRIDOR_HALF = 0.16;     // radians kept clear around the pack's line
+const CORRIDOR_HALF = 0.19;     // radians kept clear around the pack's line
 
 // ---------------------------------------------------------------- palettes
 // Duochrome moods lifted from the treatment frames.
 export const ERAS = [
-  { name: 'THE BOARDWALK · 1972', fog: 0x47102b, ground: 0x331026, building: 0x5a1b3f,
-    ambient: 0xff9a66, lamp: 0xffb14d, neon: [0xff4fa3, 0xff6a3d], sun: 0xffc890 },
-  { name: 'NEON AVENUE · 1982', fog: 0x3a1456, ground: 0x2a1045, building: 0x4a1d6e,
-    ambient: 0xcf8aff, lamp: 0xffd166, neon: [0xff3df0, 0xffe14d], sun: 0xff9de2 },
-  { name: 'THE WHIRL · 1992', fog: 0x232a7d, ground: 0x1c2160, building: 0x333a9e,
-    ambient: 0x8fb4ff, lamp: 0x9fd8ff, neon: [0xff4fd8, 0x4dd7ff], sun: 0xffb3ef },
-  { name: 'MIDNIGHT CLUB · 2002', fog: 0x0e3540, ground: 0x0a2832, building: 0x14424e,
-    ambient: 0x9fe8e0, lamp: 0xcfe9ff, neon: [0x35e0c8, 0xff5a76], sun: 0xbfffe9 },
-  { name: 'THE BALLROOM · 2012', fog: 0x5a1430, ground: 0x420e24, building: 0x6e2240,
-    ambient: 0xffb38a, lamp: 0xffd98c, neon: [0xff8fb8, 0xffd166], sun: 0xffe9b8 },
+  { name: 'THE BOARDWALK · 1972', fog: 0x7d2746, ground: 0x5e1c36, building: 0x86305a,
+    ambient: 0xffb38a, lamp: 0xffc168, neon: [0xff5aa8, 0xff8a4d], sun: 0xffd9a8 },
+  { name: 'NEON AVENUE · 1982', fog: 0x6e2f9e, ground: 0x4e2272, building: 0x7a3bb8,
+    ambient: 0xe0a8ff, lamp: 0xffd166, neon: [0xff3df0, 0xffe14d], sun: 0xffa8ec },
+  { name: 'THE WHIRL · 1992', fog: 0x4a55c8, ground: 0x333ca0, building: 0x5560d8,
+    ambient: 0xa8c4ff, lamp: 0xbfe0ff, neon: [0xff5ad8, 0x62e0ff], sun: 0xffc2f2 },
+  { name: 'MIDNIGHT CLUB · 2002', fog: 0x1f6e80, ground: 0x14525e, building: 0x2a7e8e,
+    ambient: 0xb8f2ea, lamp: 0xe2f4ff, neon: [0x3df2d8, 0xff6a86], sun: 0xd2ffee },
+  { name: 'THE BALLROOM · 2012', fog: 0x9e3a5a, ground: 0x762a44, building: 0xb04a6e,
+    ambient: 0xffc8a8, lamp: 0xffe2a8, neon: [0xffa2c8, 0xffd980], sun: 0xfff2cc },
 ];
 
 export function eraIndex(z) { return Math.max(0, Math.floor(z / ERA_LEN)); }
@@ -139,7 +139,7 @@ export class World {
       map: sunTex, color: ERAS[0].sun, transparent: true,
       fog: false, depthWrite: false, depthTest: false,
     }));
-    this.sun.scale.setScalar(150);
+    this.sun.scale.setScalar(210);
     this.sun.renderOrder = -10;
     scene.add(this.sun);
 
@@ -169,22 +169,22 @@ export class World {
       this.matCache.set(key, {
         building: new THREE.MeshLambertMaterial({
           color: p.building, emissive: 0xffffff,
-          emissiveMap: this.windowTex, emissiveIntensity: 0.62,
+          emissiveMap: this.windowTex, emissiveIntensity: 0.9,
         }),
         roof: new THREE.MeshLambertMaterial({ color: p.building }),
         pole: new THREE.MeshLambertMaterial({ color: 0x10101c }),
         neonA: new THREE.MeshBasicMaterial({ color: p.neon[0] }),
         neonB: new THREE.MeshBasicMaterial({ color: p.neon[1] }),
         cone: new THREE.MeshBasicMaterial({
-          color: p.lamp, transparent: true, opacity: 0.10,
+          color: p.lamp, transparent: true, opacity: 0.085,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
         }),
         glowDisc: new THREE.MeshBasicMaterial({
-          color: p.lamp, transparent: true, opacity: 0.10,
+          color: p.lamp, transparent: true, opacity: 0.12,
           blending: THREE.AdditiveBlending, depthWrite: false,
         }),
         crumb: new THREE.MeshBasicMaterial({
-          color: p.neon[0], transparent: true, opacity: 0.20,
+          color: p.neon[0], transparent: true, opacity: 0.30,
           blending: THREE.AdditiveBlending, depthWrite: false,
         }),
         ring: new THREE.MeshBasicMaterial({
@@ -231,7 +231,15 @@ export class World {
       const halfW = 0.045 + rng() * 0.075;          // radians
       const halfD = 4 + rng() * 7;                  // metres along z
       const h = 7 + rng() * 21;                     // metres toward axis
-      if (Math.abs(angWrap(theta - corridorTheta(zc))) < CORRIDOR_HALF + halfW) continue;
+      // keep the whole z-extent of the building clear of the weaving corridor
+      let blocked = false;
+      for (const zq of [zc - halfD, zc, zc + halfD]) {
+        if (Math.abs(angWrap(theta - corridorTheta(zq))) < CORRIDOR_HALF + halfW + 0.02) {
+          blocked = true;
+          break;
+        }
+      }
+      if (blocked) continue;
 
       const wArc = halfW * 2 * R;
       const geo = new THREE.BoxGeometry(wArc, h, halfD * 2);
@@ -288,7 +296,7 @@ export class World {
       surfPoint(theta, zc, 4.4, cone.position);
       standingQuat(theta, cone.quaternion);
       group.add(cone);
-      const pool = new THREE.Mesh(new THREE.CircleGeometry(4.2, 22), M.glowDisc);
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(3.4, 22), M.glowDisc);
       surfPoint(theta, zc, 0.12, pool.position);
       decalQuat(theta, pool.quaternion);
       group.add(pool);
