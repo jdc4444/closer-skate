@@ -99,15 +99,31 @@ function envFor(night) {
 scene.environment = envFor(0);
 
 // the wet street: a true mirror plane gliding under the city
-const mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
-  clipBias: 0.003,
-  textureWidth: 1024,
-  textureHeight: 1024,
-  color: 0x39444e,
-});
-mirror.rotation.x = -Math.PI / 2;
-mirror.position.y = 0.02;
-scene.add(mirror);
+// The full-mirror street kept flooding the floor with reflected sunset reds
+// no matter how the palettes were tuned — and it rendered the scene twice.
+// Wet-asphalt now comes from a subtle gloss on the street material itself.
+const WET_MIRROR = false;
+let mirror = null, asphaltSkin = null;
+if (WET_MIRROR) {
+  mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
+    clipBias: 0.003,
+    textureWidth: 1024,
+    textureHeight: 1024,
+    color: 0x2e3a44,
+  });
+  mirror.rotation.x = -Math.PI / 2;
+  mirror.position.y = 0.02;
+  scene.add(mirror);
+  asphaltSkin = new THREE.Mesh(
+    new THREE.PlaneGeometry(320, 320),
+    new THREE.MeshStandardMaterial({
+      color: 0x1a2026, roughness: 1, metalness: 0,
+      transparent: true, opacity: 0.48, depthWrite: false,
+    }));
+  asphaltSkin.rotation.x = -Math.PI / 2;
+  asphaltSkin.position.y = 0.035;
+  scene.add(asphaltSkin);
+}
 
 const city = new City(scene, renderer.capabilities.getMaxAnisotropy());
 const sky = new Sky(scene);
@@ -747,6 +763,7 @@ window.__test = {
   keysDbg: () => [...keys],
   gravN: () => ({ x: +player.gravN.x.toFixed(2), y: +player.gravN.y.toFixed(2), z: +player.gravN.z.toFixed(2) }),
   avatar: () => player.rig._dbg ?? null,
+  mirror: (v) => { if (mirror) { mirror.visible = v; asphaltSkin.visible = v; } return !!mirror && mirror.visible; },
   members: () => members.slice(0, 4).map(m => ({
     x: +m.p.x.toFixed(1), y: +m.p.y.toFixed(1), z: +m.p.z.toFixed(1),
     dp: +m.p.distanceTo(player.p).toFixed(1),
@@ -794,8 +811,12 @@ function step(dtOverride) {
   fillLight.target.position.copy(player.p);
   fillLight.color.copy(atm.lamp);
   sky.update(dt, camera.position, player.p, atm);
-  mirror.position.x = player.p.x;
-  mirror.position.z = player.p.z;
+  if (mirror) {
+    mirror.position.x = player.p.x;
+    mirror.position.z = player.p.z;
+    asphaltSkin.position.x = player.p.x;
+    asphaltSkin.position.z = player.p.z;
+  }
 
   audio.setSpeed(player.v, !player.grounded);
 

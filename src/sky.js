@@ -31,7 +31,9 @@ export class Sky {
           uniform vec3 top; uniform vec3 horizon; uniform vec3 below;
           void main() {
             float y = vDir.y;
-            vec3 c = mix(below, horizon, smoothstep(-0.38, -0.02, y));
+            // sunset lives in a thin band at the horizon; below it the world
+            // cools off fast (street mirrors mostly sample down here)
+            vec3 c = mix(below, horizon, smoothstep(-0.07, 0.0, y));
             c = mix(c, top, smoothstep(0.03, 0.55, y));
             gl_FragColor = vec4(c, 1.0);
           }`,

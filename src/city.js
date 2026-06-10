@@ -168,7 +168,8 @@ export class City {
         palette: p,
         winTex,
         concrete: new THREE.MeshStandardMaterial({ color: p.building, roughness: 0.85, metalness: 0.05 }),
-        asphalt: new THREE.MeshStandardMaterial({ color: p.street, roughness: 0.9, metalness: 0.1 }),
+        asphalt: new THREE.MeshStandardMaterial({
+          color: p.street, roughness: 0.55, metalness: 0.25, envMapIntensity: 0.55 }),
         sidewalk: new THREE.MeshStandardMaterial({
           color: new THREE.Color(p.street).lerp(new THREE.Color(0xffffff), 0.13), roughness: 0.95 }),
         lanePaint: new THREE.MeshBasicMaterial({ color: 0xcfd2da, transparent: true, opacity: 0.5 }),
