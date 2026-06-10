@@ -24,7 +24,7 @@ window.__avatarInfo = await initAvatars();
 // ---------------------------------------------------------------- setup
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.6));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
@@ -374,7 +374,7 @@ function respawn() {
 // ---------------------------------------------------------------- player
 function updatePlayer(dt) {
   const steer = playing ? steerInput() : 0;
-  const wobble = player.stumbleT > 0 ? Math.sin(elapsed * 24) * 0.6 : 0;
+  const wobble = player.stumbleT > 0 ? Math.sin(elapsed * 10) * 0.22 : 0;
   player.prevP.copy(player.p);
 
   const boxes = city.activeBoxes(player.p);

@@ -28,9 +28,9 @@ function makeWindowTexture(neonHex) {
   const cols = 12, rows = 16;
   const cw = 256 / cols, rh = 256 / rows;
   for (let j = 0; j < rows; j++) {
-    const office = Math.random() < 0.14;     // a whole floor working late
+    const office = Math.random() < 0.10;     // a whole floor working late
     for (let i = 0; i < cols; i++) {
-      const lit = office ? Math.random() < 0.85 : Math.random() < 0.30;
+      const lit = office ? Math.random() < 0.8 : Math.random() < 0.22;
       if (!lit) continue;
       const r = Math.random();
       g.fillStyle = r < 0.45 ? '#ffe8c8' : r < 0.85 ? '#cfe6f8' : neonHex;
@@ -217,7 +217,7 @@ export class City {
     return new THREE.MeshStandardMaterial({
       color: p.glass, roughness: 0.22, metalness: 0.7,
       emissive: 0xffffff, emissiveMap: tex,
-      emissiveIntensity: 0.8, envMapIntensity: 1.1,
+      emissiveIntensity: 0.62, envMapIntensity: 1.1,
     });
   }
   // pastel deco stucco, windows glowing warm in the dusk
@@ -228,7 +228,7 @@ export class City {
       color: new THREE.Color(stucco).lerp(new THREE.Color(M.palette.building), 0.3),
       roughness: 0.85, metalness: 0.02,
       emissive: 0xffffff, emissiveMap: tex,
-      emissiveIntensity: 0.5,
+      emissiveIntensity: 0.42,
     });
   }
 
@@ -243,7 +243,8 @@ export class City {
     const variant = Math.floor(rng() * 3);
     const isGlass = rng() < 0.22;
     const mat = isGlass ? this.glassMat(M, variant) : this.stuccoMat(M, variant, stucco);
-    mat.emissiveMap.repeat.set(Math.max(1, Math.round(w / 8)), Math.max(1, Math.round(h / 9)));
+    // generous window cells — fine grids shimmer into noise at distance
+    mat.emissiveMap.repeat.set(Math.max(1, Math.round(w / 14)), Math.max(1, Math.round(h / 16)));
     const geo = new THREE.BoxGeometry(w, h, d);
     const roof = new THREE.MeshStandardMaterial({
       color: new THREE.Color(stucco).multiplyScalar(0.55), roughness: 0.9 });
@@ -251,9 +252,11 @@ export class City {
     mesh.position.set(x + w / 2, y0 + h / 2, z + d / 2);
     mesh.castShadow = mesh.receiveShadow = true;
     chunk.group.add(mesh);
-    const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), rng() < 0.7 ? M.edge : M.edgeSoft);
-    line.position.copy(mesh.position);
-    chunk.group.add(line);
+    if (rng() < 0.6) {
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+      line.position.copy(mesh.position);
+      chunk.group.add(line);
+    }
     // deco speed stripes wrapping the facade
     const stripes = h > 14 ? 1 + Math.floor(rng() * 2) : rng() < 0.5 ? 1 : 0;
     for (let s = 0; s < stripes; s++) {

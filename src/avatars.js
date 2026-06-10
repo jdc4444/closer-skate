@@ -171,8 +171,8 @@ function buildIdleClip(bones, bases = {}) {
     tracks.push(quatKeys(bones.rightfoot, T, T.map(() => -0.12)));
   }
   if (bones.leftarm && bones.rightarm) {
-    tracks.push(quatKeys(bones.leftarm, T, sway(0, 0.03, 0.02), X, null, bases.left));
-    tracks.push(quatKeys(bones.rightarm, T, sway(Math.PI, 0.03, 0.02), X, null, bases.right));
+    tracks.push(quatKeys(bones.leftarm, T, sway(0, 0.018, 0.02), X, null, bases.left));
+    tracks.push(quatKeys(bones.rightarm, T, sway(Math.PI, 0.018, 0.02), X, null, bases.right));
   }
   if (bones.leftforearm && bones.rightforearm) {
     tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.18)));
@@ -281,19 +281,21 @@ export function makeCharacter(opts = {}) {
   idle.time = Math.random() * idleClip.duration;
 
   let lastT = null;
+  let blend = 0;   // eased skate/idle weight — raw speed thrashes at the threshold
   function animate(t, speed, leanIn = 0, crouch = 0) {
     const dt = lastT === null ? 0.016 : Math.max(0, Math.min(0.1, t - lastT));
     lastT = t;
-    const sp01 = THREE.MathUtils.clamp(speed / 7, 0, 1);
-    skate.setEffectiveWeight(sp01);
-    idle.setEffectiveWeight(1 - sp01);
+    const target = THREE.MathUtils.clamp((speed - 3) / 6, 0, 1);
+    blend += (target - blend) * Math.min(1, dt * 5);
+    skate.setEffectiveWeight(blend);
+    idle.setEffectiveWeight(1 - blend);
     skate.timeScale = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.8);
     mixer.update(dt);
     // post-mix body language: tuck and carve
     if (bones.spine1) bones.spine1.rotation.x += crouch * 0.55;
     if (bones.spine) bones.spine.rotation.x += crouch * 0.25;
     lean.rotation.z = THREE.MathUtils.lerp(lean.rotation.z, -leanIn * 0.38, 0.15);
-    lean.rotation.x = sp01 * 0.08 + crouch * 0.16;
+    lean.rotation.x = blend * 0.08 + crouch * 0.16;
     lean.position.y = -crouch * 0.26;
   }
 
