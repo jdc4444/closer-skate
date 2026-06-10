@@ -1,17 +1,19 @@
 // CLOSER — an infinite disco, on rollerskates.
-// v2: true surface-skating. The city is real architecture; your "down" is
-// whatever face you're on. Ride facades, rooftops, undersides; pass through
-// windows; follow the pack or lead it.
+// v3: open city. Skate freely — push, glide, brake, pivot, tuck low.
+// Gravity is whatever surface you're on: ride facades, rooftops, the
+// undersides of slabs, and the spinning platforms between towers.
+// Lone skaters join as you pass; the troupe is yours. Each night has a
+// destination — follow the light, the decades turn when you arrive.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { eraIndex, eraLabel, blendedAtmosphere } from './palettes.js';
-import { City } from './city.js';
+import { nightLabel, venueName, blendedAtmosphere } from './palettes.js';
+import { City, CHUNK } from './city.js';
 import { Sky } from './sky.js';
 import * as SURF from './surface.js';
-import { makeSkater, Trail, makeLink } from './skaters.js';
+import { makeSkater, Trail } from './skaters.js';
 import { DiscoAudio } from './audio.js';
 
 // ---------------------------------------------------------------- setup
@@ -26,9 +28,9 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xe06a72, 42, 360);
+scene.fog = new THREE.Fog(0xe06a72, 30, 290);
 
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 1600);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1600);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -52,13 +54,17 @@ dirLight.shadow.bias = -0.0004;
 scene.add(dirLight);
 scene.add(dirLight.target);
 const LIGHT_OFF = new THREE.Vector3(34, 80, -28);
+// soft opposing fill so facades never go flat when the key light grazes them
+const fillLight = new THREE.DirectionalLight(0xffb8d8, 0.5);
+scene.add(fillLight);
+scene.add(fillLight.target);
+const FILL_OFF = new THREE.Vector3(-46, 18, 52);
 
 const city = new City(scene);
-city.ensure(0);
 const sky = new Sky(scene);
 const audio = new DiscoAudio();
 
-// film grain tile for the CSS overlay
+// film grain tile
 (() => {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
@@ -73,12 +79,12 @@ const audio = new DiscoAudio();
   document.getElementById('grain').style.backgroundImage = `url(${c.toDataURL()})`;
 })();
 
-// ---------------------------------------------------------------- DOM
 const el = {
   title: document.getElementById('title'),
   hud: document.getElementById('hud'),
   era: document.getElementById('era'),
   flow: document.getElementById('flow'),
+  pack: document.getElementById('pack'),
   speed: document.getElementById('speed'),
   help: document.getElementById('help'),
   meterLabel: document.getElementById('meterLabel'),
@@ -87,109 +93,87 @@ const el = {
 };
 
 // ---------------------------------------------------------------- state
-const ROSTER = [
-  { name: 'TINY',   color: 0x35e0c8 },
-  { name: 'BENNIE', color: 0xffd166 },
-  { name: 'LEVON',  color: 0xff7a5a },
-  { name: 'NIKITA', color: 0xc79bff },
-  { name: 'DANIEL', color: 0x9fffcf },
-  { name: 'ROCKET', color: 0xff4f6e },
-];
-
-const spawn = city.sampleRoute(6);
 const player = {
-  p: spawn.p.clone(),
+  p: new THREE.Vector3(CHUNK / 2, 0, CHUNK / 2),
   n: new THREE.Vector3(0, 1, 0),
   f: new THREE.Vector3(0, 0, 1),
   box: null,
-  prevP: spawn.p.clone(),
-  v: 16,
+  prevP: new THREE.Vector3(),
+  v: 0,
   vel: new THREE.Vector3(),
   gravN: new THREE.Vector3(0, 1, 0),
   grounded: true,
-  s: 6, routeIdx: 0,
+  airT: 0,
+  tuck: 0,
   stumbleT: 0, invulnT: 0, boostPulse: 0,
   rig: makeSkater({ outfit: 0xffc23d, hair: 0xff4660, skin: 0xeab38a, dress: false, jeans: true, accent: 0xff8a3d }),
-  trail: null,
 };
 scene.add(player.rig.root);
-player.trail = new Trail(scene, 0xfff1c9);
 
-let members = [];
-let links = [];
-const playerLink = makeLink(scene, 0xfff1c9);
-let mode = 'follow';
-let linked = false;
-let linkTimer = 0;
+let members = [];        // your roller troupe
 let flow = 0;
-let prevEra = 0;
-let rosterNext = 0;
+let night = 0;
+let nightF = 0;          // smoothed night for the sky crossfade
 let playing = false;
 let muted = false;
 let shake = 0;
 let elapsed = 0;
-let leaderS = 30;
+let dest = null;         // {pos, d0}
+let destCooldown = 0;
 
-// player path history (used when you lead)
-const hist = [];
-let lastHistS = -1e9;
-function histSample(s) {
-  if (!hist.length) return null;
-  if (s <= hist[0].s) return hist[0];
-  if (s >= hist[hist.length - 1].s) return hist[hist.length - 1];
-  let lo = 0, hi = hist.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (hist[mid].s <= s) lo = mid; else hi = mid;
+city.ensure(player.p);
+// nudge spawn out of any tower footprint
+{
+  const boxes = city.activeBoxes(player.p);
+  const probe = player.p.clone();
+  probe.y = 1.2;
+  let guard = 0;
+  while (guard++ < 30 && boxes.some(b => SURF.insideBox(probe, b))) {
+    player.p.x += 6;
+    probe.x += 6;
   }
-  return hist[lo];
+}
+player.prevP.copy(player.p);
+
+function newDestination() {
+  const ang = (Math.random() - 0.5) * 1.9;
+  const base = Math.atan2(player.f.x, player.f.z);
+  const a = base + ang;
+  const dist = Math.min(1200, 600 + night * 70);
+  const pos = new THREE.Vector3(
+    player.p.x + Math.sin(a) * dist, 0, player.p.z + Math.cos(a) * dist);
+  city.setDestination(pos, night);
+  dest = { pos, d0: dist };
+}
+newDestination();
+
+function destDist() {
+  if (!dest) return 0;
+  return Math.hypot(dest.pos.x - player.p.x, dest.pos.z - player.p.z);
 }
 
-function addMember(rec, atS) {
-  const rig = makeSkater({ outfit: rec.color, dress: true });
+function addMember(rec) {
+  const rig = makeSkater({ outfit: rec.color, dress: Math.random() < 0.7 });
   scene.add(rig.root);
-  const sm = city.sampleRoute(atS) ?? { p: player.p.clone(), n: player.n.clone(), f: player.f.clone() };
-  const m = {
-    ...rec, rig,
-    trail: new Trail(scene, rec.color),
-    p: sm.p.clone(), n: sm.n.clone(), f: sm.f.clone(),
-    prevP: sm.p.clone(), speed: 20,
-    weavePhase: Math.random() * Math.PI * 2,
-  };
-  members.push(m);
-  if (members.length > 1) links.push(makeLink(scene, 0xfff1c9));
-  return m;
-}
-
-function softReset() {
-  flow = 0;
-  mode = 'follow';
-  linked = false;
-  linkTimer = 0;
-  for (const m of members) {
-    scene.remove(m.rig.root);
-    m.rig.root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
-    scene.remove(m.trail.mesh);
-    m.trail.geo.dispose();
-  }
-  for (const l of links) { scene.remove(l.line); l.line.geometry.dispose(); }
-  members = [];
-  links = [];
-  rosterNext = 0;
-  leaderS = player.s + 24;
-  addMember(ROSTER[rosterNext++], leaderS);
+  members.push({
+    name: rec.name, color: rec.color, rig,
+    trail: new Trail(scene, rec.color, 36, 0.16),
+    p: rec.p.clone(), prevP: rec.p.clone(),
+    n: new THREE.Vector3(0, 1, 0), f: player.f.clone(),
+    speed: 8, phase: Math.random() * Math.PI * 2,
+  });
 }
 
 // ---------------------------------------------------------------- toasts
 const toastQueue = [];
 let toastBusy = 0;
-function toast(text, dur = 2.4) { toastQueue.push({ text, dur }); }
+function toast(text, dur = 2.2) { toastQueue.push({ text, dur }); }
 function updateToasts(dt) {
   toastBusy -= dt;
   if (toastBusy <= 0) {
     if (el.toast.classList.contains('show')) {
       el.toast.classList.remove('show');
-      toastBusy = 0.5;
+      toastBusy = 0.4;
       return;
     }
     if (toastQueue.length) {
@@ -211,11 +195,11 @@ window.addEventListener('keydown', (e) => {
   if (e.key.toLowerCase() === 'm') {
     muted = !muted;
     audio.setMuted(muted);
-    toast(muted ? 'SOUND OFF' : 'SOUND ON', 1.2);
+    toast(muted ? 'SOUND OFF' : 'SOUND ON', 1.1);
   }
   if (e.key.toLowerCase() === 'r' && playing) {
-    softReset();
-    toast('FROM THE TOP', 1.6);
+    flow = 0;
+    toast('FLOW RESET', 1.2);
   }
 });
 window.addEventListener('keyup', (e) => {
@@ -225,8 +209,9 @@ window.addEventListener('keyup', (e) => {
 const touches = new Map();
 window.addEventListener('pointerdown', (e) => {
   if (!playing) { startGame(); return; }
-  const f = e.clientX / window.innerWidth;
-  const zone = f < 0.35 ? 'left' : f > 0.65 ? 'right' : 'mid';
+  const fx = e.clientX / window.innerWidth;
+  const fy = e.clientY / window.innerHeight;
+  const zone = fy > 0.72 ? 'push' : fx < 0.35 ? 'left' : fx > 0.65 ? 'right' : 'mid';
   touches.set(e.pointerId, zone);
   if (zone === 'mid') keys.add('space');
 });
@@ -246,6 +231,9 @@ function steerInput() {
   }
   return THREE.MathUtils.clamp(s, -1, 1);
 }
+const pushInput = () => keys.has('arrowup') || keys.has('w') || [...touches.values()].includes('push');
+const brakeInput = () => keys.has('arrowdown') || keys.has('s');
+const tuckInput = () => keys.has('shift');
 
 function startGame() {
   if (playing) return;
@@ -254,8 +242,9 @@ function startGame() {
   el.hud.classList.add('on');
   audio.start();
   audio.setMuted(muted);
-  setTimeout(() => { el.help.style.opacity = 0; }, 11000);
-  toast(eraLabel(0), 2.6);
+  setTimeout(() => { el.help.style.opacity = 0; }, 12000);
+  toast(nightLabel(0), 2.4);
+  toast(`FOLLOW THE LIGHT — TO ${venueName(night + 1)}`, 2.6);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -267,6 +256,7 @@ document.addEventListener('visibilitychange', () => {
 // ---------------------------------------------------------------- helpers
 const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _t3 = new THREE.Vector3();
 const _right = new THREE.Vector3();
+const _mtx = new THREE.Matrix4();
 
 function signedAngle(a, b, up) {
   _t3.crossVectors(a, b);
@@ -276,24 +266,23 @@ function signedAngle(a, b, up) {
 function poseRig(rig, p, n, f) {
   rig.root.position.copy(p);
   _right.crossVectors(n, f).normalize();
-  const m = new THREE.Matrix4().makeBasis(_right, n, f);
-  rig.root.quaternion.setFromRotationMatrix(m);
+  _mtx.makeBasis(_right, n, f);
+  rig.root.quaternion.setFromRotationMatrix(_mtx);
 }
 
-function respawn(toS, announce = true) {
-  const sm = city.sampleRoute(toS);
-  if (!sm) return;
-  player.p.copy(sm.p).addScaledVector(sm.n, 0.05);
-  player.prevP.copy(player.p);
-  player.n.copy(sm.n);
-  player.f.copy(sm.f).addScaledVector(sm.n, -sm.f.dot(sm.n)).normalize();
-  if (player.f.lengthSq() < 0.5) player.f.set(0, 0, 1);
-  player.v = 18;
+function respawn() {
+  player.p.x += (dest ? Math.sign(dest.pos.x - player.p.x) : 1) * 2;
+  player.p.y = 0.05;
+  player.n.set(0, 1, 0);
+  player.f.y = 0;
+  if (player.f.lengthSq() < 0.1) player.f.set(0, 0, 1);
+  player.f.normalize();
+  player.v = Math.min(player.v, 12);
+  player.vel.set(0, 0, 0);
   player.grounded = true;
   player.box = null;
-  player.vel.set(0, 0, 0);
   shake = 0;
-  if (announce) toast('BACK TO THE LINE', 1.6);
+  toast('BACK ON YOUR FEET', 1.3);
 }
 
 // ---------------------------------------------------------------- player
@@ -302,54 +291,82 @@ function updatePlayer(dt) {
   const wobble = player.stumbleT > 0 ? Math.sin(elapsed * 24) * 0.6 : 0;
   player.prevP.copy(player.p);
 
+  const boxes = city.activeBoxes(player.p);
+
+  // tuck
+  const wantTuck = playing && tuckInput();
+  player.tuck += ((wantTuck ? 1 : 0) - player.tuck) * Math.min(1, dt * 7);
+
   let appliedSteer = steer;
   if (!playing || window.__auto) {
-    const target = city.sampleRoute(player.s + 9 + player.v * 0.28);
-    if (target) {
-      _t1.copy(target.p).sub(player.p);
+    // attract/test pilot: chase the beacon, jump roof edges
+    if (dest) {
+      _t1.set(dest.pos.x - player.p.x, 0, dest.pos.z - player.p.z);
       _t1.addScaledVector(player.n, -_t1.dot(player.n));
-      if (_t1.lengthSq() > 0.04) {
+      if (_t1.lengthSq() > 1) {
         const ang = signedAngle(player.f, _t1.normalize(), player.n);
-        appliedSteer = THREE.MathUtils.clamp(ang * 1.6, -1, 1);
-      }
-      if (playing && player.grounded) {
-        for (let i = player.routeIdx; i < Math.min(player.routeIdx + 4, city.route.length); i++) {
-          const pt = city.route[i];
-          if (pt.jump && pt.p.distanceToSquared(player.p) < 40) { doJump(); break; }
-        }
+        appliedSteer = THREE.MathUtils.clamp(ang * 1.8, -1, 1);
       }
     }
-    player.v += ((playing ? 24 : 13) - player.v) * Math.min(1, dt);
+    player.v += ((playing ? 30 : 13) - player.v) * Math.min(1, dt * 0.8);
+    if (playing && player.grounded && player.n.y > 0.9 && player.p.y > 3.5 && player.v > 16) {
+      _t2.copy(player.p).addScaledVector(player.f, 9).addScaledVector(player.n, 0.3);
+      if (!SURF.support(boxes, _t2, player.n, 2.5, 0.1)) doJump();
+    }
   } else {
-    let vTarget = 23;
-    if (keys.has('arrowup') || keys.has('w')) vTarget += 11;
-    if (keys.has('arrowdown') || keys.has('s')) vTarget = 12;
-    if (linked) vTarget += 2.5;
-    if (player.stumbleT > 0) vTarget = Math.min(vTarget, 10);
-    player.v += (vTarget - player.v) * Math.min(1, dt * (player.grounded ? 0.9 : 0.25));
-    player.v = Math.min(player.v, 46);
+    // free skating: push, glide, brake
+    const vmax = player.tuck > 0.5 ? 36 : 30;
+    if (pushInput() && player.grounded) {
+      const accel = player.v < 12 ? 15 : 9;
+      player.v = Math.min(Math.max(player.v, 0) + accel * dt, Math.max(vmax, player.v));
+    }
+    if (brakeInput() && player.grounded) player.v = Math.max(0, player.v - 36 * dt);
+    const drag = player.tuck > 0.5 ? 0.04 : 0.15;
+    player.v -= player.v * drag * dt;
+    if (player.v < 0.4 && !pushInput()) player.v = 0;
+    if (player.stumbleT > 0) player.v = Math.min(player.v, 9);
+
     if (keys.has('space') && player.grounded) {
       doJump();
       keys.delete('space');
     }
   }
 
-  const boxes = city.activeBoxes(player.p.z);
-
   if (player.grounded) {
-    const rate = (1.9 + player.v * 0.012) * (player.stumbleT > 0 ? 0.4 : 1);
+    // rotating platforms carry and turn you
+    if (player.box && player.box.rot) {
+      const r = player.box.rot;
+      const dth = r.w * dt;
+      const cs = Math.cos(dth), sn = Math.sin(dth);
+      const dx = player.p.x - r.cx, dz = player.p.z - r.cz;
+      player.p.x = r.cx + dx * cs - dz * sn;
+      player.p.z = r.cz + dx * sn + dz * cs;
+      player.f.applyAxisAngle(player.n, dth);
+    }
+
+    const rate = (player.v < 4 ? 3.0 : 1.7 + player.v * 0.01) *
+      (player.tuck > 0.5 ? 0.75 : 1) * (player.stumbleT > 0 ? 0.4 : 1);
     player.f.applyAxisAngle(player.n, appliedSteer * rate * dt);
     player.f.addScaledVector(player.n, -player.f.dot(player.n)).normalize();
 
-    const ev = {};
-    SURF.stepGrounded(boxes, player, player.v * dt, ev);
-    if (ev.stumbled) stumble();
-    if (ev.climbed && playing) flow += 30;
-    if (ev.lost) respawn(player.s + 4);
+    if (player.v * dt > 1e-5) {
+      const ev = {};
+      SURF.stepGrounded(boxes, player, player.v * dt, ev);
+      if (ev.stumbled) stumble();
+      if (ev.climbed && playing) flow += 25;
+      if (ev.fell) {
+        player.grounded = false;
+        player.gravN.copy(player.n);
+        player.vel.copy(player.f).multiplyScalar(player.v);
+        player.airT = 0;
+      }
+      if (ev.lost) respawn();
+    }
   } else {
+    player.airT += dt;
     player.vel.addScaledVector(player.gravN, -26 * dt);
-    // landing: face below along gravity
-    const sup = SURF.support(boxes, player.p, player.gravN, 60, 0.1);
+    if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * 1.0 * dt);
+    const sup = SURF.support(boxes, player.prevP, player.gravN, 80, 0.1);
     player.p.addScaledVector(player.vel, dt);
     if (sup) {
       const a = SURF.axisOf(player.gravN);
@@ -360,13 +377,24 @@ function updatePlayer(dt) {
         player.n.copy(player.gravN);
         _t1.copy(player.vel).addScaledVector(player.gravN, -player.vel.dot(player.gravN));
         if (_t1.lengthSq() > 1) player.f.copy(_t1).normalize();
-        player.v = THREE.MathUtils.clamp(_t1.length(), 10, 46);
+        const landV = THREE.MathUtils.clamp(_t1.length(), 0, 48);
         player.grounded = true;
         player.box = sup.box;
         player.vel.set(0, 0, 0);
+        // building-to-building air rewarded
+        if (playing && player.airT > 0.55 && sup.q > 3.5) {
+          flow += Math.round(120 + player.airT * 160);
+          player.v = Math.min(landV + 5, 46);
+          player.boostPulse = 0.8;
+          audio.boost();
+          if (player.airT > 0.85) toast(`+AIR ${Math.round(player.airT * 10) / 10}S`, 0.9);
+        } else {
+          player.v = landV;
+        }
+        player.airT = 0;
       }
     }
-    // air-attach to a facade you leap at
+    // leap at a facade and ride it
     if (!player.grounded) {
       _t1.copy(player.vel).addScaledVector(player.gravN, -player.vel.dot(player.gravN));
       if (_t1.lengthSq() > 16) {
@@ -377,42 +405,54 @@ function updatePlayer(dt) {
           const st = { p: player.p, n: player.n.copy(player.gravN), f: player.f.copy(_t1).normalize(), box: player.box };
           SURF.climb(st, k, sk, w.q, w.box);
           player.box = st.box;
-          player.v = THREE.MathUtils.clamp(_t1.length() * 0.8, 10, 40);
+          player.v = THREE.MathUtils.clamp(_t1.length() * 0.8, 8, 40);
           player.grounded = true;
           player.vel.set(0, 0, 0);
-          if (playing) flow += 60;
-          audio.link();
+          player.airT = 0;
+          if (playing) flow += 50;
+          audio.blip([523, 659, 784], 'sine', 0.06, 0.12, 0.35);
         }
       }
     }
-    if (player.p.y < -110 || player.p.y > 160) respawn(player.s + 4);
+    if (player.p.y < -50 || player.p.y > 240 || !isFinite(player.p.y)) respawn();
   }
 
-  // progress + lost check
-  const nr = city.nearestS(player.p, player.routeIdx);
-  player.routeIdx = nr.idx;
-  player.s = nr.s;
-  if (nr.dist > 52) respawn(player.s + 4);
-
-  if (player.s - lastHistS >= 1) {
-    hist.push({ s: player.s, p: player.p.clone(), n: player.n.clone(), f: player.f.clone() });
-    lastHistS = player.s;
-    if (hist.length > 700) hist.splice(0, hist.length - 700);
-  }
-
-  // rings + windows
-  const ring = city.tryRing(player.p);
-  if (ring) {
-    player.v = Math.min(46, player.v + 13);
-    player.boostPulse = 1;
-    flow += 150;
-    audio.boost();
-  }
+  // windows + recruits
   const win = city.tryWindow(player.p, player.prevP);
   if (win && playing) {
     flow += 120;
     audio.blip([659, 880, 1318], 'triangle', 0.05, 0.15, 0.4);
-    toast('THROUGH THE WINDOW', 1.2);
+    toast('THROUGH THE WINDOW', 1.1);
+  }
+  if (playing && members.length < 28) {
+    const rec = city.tryRecruit(player.p, 7.5);
+    if (rec) {
+      addMember(rec);
+      audio.join();
+      toast(`${rec.name} JOINED · ${members.length + 1} STRONG`, 1.5);
+    }
+  }
+
+  // destination
+  if (playing && dest) {
+    const d = destDist();
+    if (d < 16) {
+      flow += 1500 + members.length * 100;
+      audio.blip([523, 659, 784, 1046, 1318], 'triangle', 0.09, 0.16, 0.7);
+      toast(`${venueName(night + 1)} — NIGHT ${night + 1} COMPLETE`, 3.0);
+      night++;
+      city.night = night;
+      city.clearBeacon();
+      dest = null;
+      destCooldown = 1.6;
+    }
+  }
+  if (!dest && playing) {
+    destCooldown -= dt;
+    if (destCooldown <= 0) {
+      newDestination();
+      toast(`TONIGHT: ${venueName(night + 1)}`, 2.2);
+    }
   }
 
   player.stumbleT = Math.max(0, player.stumbleT - dt);
@@ -420,141 +460,87 @@ function updatePlayer(dt) {
   player.boostPulse = Math.max(0, player.boostPulse - dt * 1.4);
 
   poseRig(player.rig, player.p, player.n, player.f);
-  player.rig.animate(elapsed, player.v, steerInput() + wobble);
-  _t1.copy(player.p).addScaledVector(player.n, 0.22);
-  player.trail.update(dt, _t1, player.n, player.f);
+  player.rig.animate(elapsed, player.grounded ? player.v : 4, steer + wobble, player.tuck);
 
-  if (playing) {
-    const mult = mode === 'leading' ? 5 : linked ? 3 : 1;
-    flow += dt * player.v * 0.6 * mult;
+  if (playing && player.v > 3) {
+    flow += dt * player.v * 0.55 * (1 + members.length * 0.12);
   }
 }
 
 function doJump() {
-  player.vel.copy(player.f).multiplyScalar(player.v).addScaledVector(player.n, 10.8);
+  const jv = (8.6 + player.v * 0.135) * (1 + player.tuck * 0.22);
+  player.vel.copy(player.f).multiplyScalar(player.v).addScaledVector(player.n, jv);
   player.gravN.copy(player.n);
   player.grounded = false;
+  player.airT = 0;
 }
 
 function stumble() {
   if (player.invulnT > 0) return;
-  player.v = Math.max(8, player.v * 0.45);
+  player.v = Math.max(6, player.v * 0.45);
   player.stumbleT = 0.9;
   player.invulnT = 1.5;
-  shake = 0.55;
+  shake = 0.5;
   audio.stumble();
-  if (mode === 'leading') {
-    mode = 'follow';
-    linked = false;
-    toast('THE PACK SWEEPS PAST', 1.8);
-  }
 }
 
-// ---------------------------------------------------------------- pack
-function updatePack(dt) {
-  if (!members.length) return 999;
-  const leader = members[0];
-
-  if (mode === 'follow' && playing && player.s > leaderS + 6 &&
-      player.invulnT <= 0 && player.stumbleT <= 0) {
-    mode = 'leading';
-    toast('YOU LEAD THE NIGHT', 2.0);
-    audio.link();
-  } else if (mode === 'leading' && leaderS > player.s + 2) {
-    mode = 'follow';
-  }
-
-  // leader pacing along the route (asymmetric rubber band)
-  if (mode === 'follow') {
-    const lead = leaderS - player.s;
-    const ideal = 14 + (members.length - 1) * 6;
-    let vL;
-    if (lead < 0) vL = Math.max(player.v + 7, 30);
-    else if (lead < ideal) vL = Math.min(26, player.v * 0.92 + 2);
-    else vL = THREE.MathUtils.clamp(player.v + (ideal - lead) * 0.5, lead > 80 ? -9 : 0, 40);
-    leaderS += vL * dt;
-    leader.speed = Math.abs(vL);
-  } else {
-    leaderS = Math.max(leaderS - 10 * dt, player.s - 8);
-  }
+// ---------------------------------------------------------------- troupe
+function updateTroupe(dt) {
+  if (!members.length) return;
+  const boxes = city.activeBoxes(player.p);
+  _right.crossVectors(player.n, player.f).normalize();
 
   for (let i = 0; i < members.length; i++) {
     const m = members[i];
     m.prevP.copy(m.p);
-    let target = null;
-    if (mode === 'leading') {
-      target = histSample(player.s - 8 - i * 6);
+
+    const row = Math.floor(i / 3) + 1;
+    const lane = (i % 3) - 1;
+    const brick = row % 2 ? 0.45 : -0.45;
+    let back = 4.5 + row * 4.0;
+    let side = (lane + brick) * 3.6 + Math.sin(elapsed * 0.9 + m.phase) * 0.9;
+
+    // project the slot onto skateable ground near the player's surface
+    let slot = _t1;
+    for (let iter = 0; iter < 3; iter++) {
+      slot.copy(player.p).addScaledVector(player.f, -back).addScaledVector(_right, side);
+      _t2.copy(slot).addScaledVector(player.n, 1.2);
+      let blocked = false;
+      for (const b of boxes) {
+        if (SURF.insideBox(_t2, b)) { blocked = true; break; }
+      }
+      if (!blocked) {
+        _t2.copy(slot).addScaledVector(player.n, 0.5);
+        const sup = SURF.support(boxes, _t2, player.n, 9, 0.3);
+        if (sup) {
+          const a = SURF.axisOf(player.n);
+          slot.setComponent(a, sup.q);
+          break;
+        }
+      }
+      back *= 0.6;
+      side *= 0.5;
     }
-    if (!target) {
-      target = city.sampleRoute(Math.max(2, leaderS - i * 6));
-    }
-    if (!target) continue;
-    m.p.lerp(target.p, Math.min(1, dt * 3.2));
-    m.n.lerp(target.n, Math.min(1, dt * 4.5)).normalize();
-    if (target.f && target.f.lengthSq() > 0.1) {
-      m.f.lerp(target.f, Math.min(1, dt * 4)).normalize();
+
+    m.p.lerp(slot, Math.min(1, dt * 5));
+    m.n.lerp(player.n, Math.min(1, dt * 5)).normalize();
+    _t2.copy(m.p).sub(m.prevP);
+    const sp = _t2.length() / Math.max(dt, 1e-4);
+    if (sp > 1.5) {
+      _t2.normalize();
+      m.f.lerp(_t2, Math.min(1, dt * 6));
+    } else {
+      m.f.lerp(player.f, Math.min(1, dt * 2));
     }
     m.f.addScaledVector(m.n, -m.f.dot(m.n));
-    if (m.f.lengthSq() < 1e-4) m.f.set(0, 0, 1);
+    if (m.f.lengthSq() < 1e-4) m.f.copy(player.f);
     m.f.normalize();
-    const sp = m.prevP.distanceTo(m.p) / Math.max(dt, 1e-4);
-    m.speed = THREE.MathUtils.lerp(m.speed ?? 20, sp, 0.2);
+    m.speed = THREE.MathUtils.lerp(m.speed, sp, 0.2);
 
     poseRig(m.rig, m.p, m.n, m.f);
-    m.rig.animate(elapsed + m.weavePhase, m.speed, 0);
-    _t1.copy(m.p).addScaledVector(m.n, 0.22);
-    m.trail.update(dt, _t1, m.n, m.f);
-  }
-
-  for (let i = 0; i < links.length; i++) {
-    const a = members[i], b = members[i + 1];
-    if (!a || !b) continue;
-    _t1.copy(a.p).addScaledVector(a.n, 1.35);
-    _t2.copy(b.p).addScaledVector(b.n, 1.35);
-    links[i].set(_t1, _t2, 0.3 + Math.sin(elapsed * 5 + i) * 0.1);
-  }
-
-  const anchor = mode === 'leading' ? members[0] : members[members.length - 1];
-  const d = anchor.p.distanceTo(player.p);
-
-  if (playing && mode === 'follow') {
-    if (d < 18) {
-      linkTimer += dt;
-      if (!linked && linkTimer > 0.8) {
-        linked = true;
-        audio.link();
-        toast('LINKED — HOLD ON', 1.6);
-      }
-    } else {
-      linkTimer = 0;
-      if (linked && d > 26) {
-        linked = false;
-        audio.unlink();
-      }
-    }
-  }
-
-  if (linked && mode === 'follow') {
-    _t1.copy(player.p).addScaledVector(player.n, 1.35);
-    _t2.copy(anchor.p).addScaledVector(anchor.n, 1.35);
-    playerLink.set(_t1, _t2, 0.5 + Math.sin(elapsed * 6) * 0.25);
-  } else {
-    playerLink.line.material.opacity *= 0.9;
-  }
-  return d;
-}
-
-function updateEra() {
-  const e = eraIndex(player.s);
-  if (e > prevEra) {
-    prevEra = e;
-    toast(eraLabel(player.s), 2.8);
-    if (rosterNext < ROSTER.length) {
-      const rec = ROSTER[rosterNext++];
-      addMember(rec, leaderS + 18);
-      toast(`${rec.name} JOINED THE NIGHT`, 2.2);
-      audio.join();
-    }
+    m.rig.animate(elapsed + m.phase, m.speed, 0, player.tuck * 0.8);
+    _t2.copy(m.p).addScaledVector(m.n, 0.22);
+    m.trail.update(dt, _t2, m.n, m.f);
   }
 }
 
@@ -565,16 +551,17 @@ const camPos = new THREE.Vector3(0, 5, -10);
 const camLook = new THREE.Vector3();
 
 function updateCamera(dt) {
-  smoothUp.lerp(player.n, 1 - Math.exp(-4.2 * dt)).normalize();
-  smoothF.lerp(player.f, 1 - Math.exp(-5.5 * dt));
+  smoothUp.lerp(player.n, 1 - Math.exp(-7 * dt)).normalize();
+  smoothF.lerp(player.f, 1 - Math.exp(-9.5 * dt));
   smoothF.addScaledVector(smoothUp, -smoothF.dot(smoothUp));
   if (smoothF.lengthSq() < 1e-4) smoothF.copy(player.f);
   smoothF.normalize();
 
-  _t1.copy(player.p).addScaledVector(smoothUp, 4.1).addScaledVector(smoothF, -9.8);
-  _t2.copy(player.p).addScaledVector(smoothUp, 2.1).addScaledVector(smoothF, 11.5);
-  camPos.lerp(_t1, 1 - Math.exp(-7 * dt));
-  camLook.lerp(_t2, 1 - Math.exp(-8.5 * dt));
+  const h = 4.1 - player.tuck * 1.2;
+  _t1.copy(player.p).addScaledVector(smoothUp, h).addScaledVector(smoothF, -8.8);
+  _t2.copy(player.p).addScaledVector(smoothUp, 1.9).addScaledVector(smoothF, 10.5);
+  camPos.lerp(_t1, 1 - Math.exp(-12 * dt));
+  camLook.lerp(_t2, 1 - Math.exp(-15 * dt));
 
   shake = Math.max(0, shake - dt * 1.4);
   _right.crossVectors(smoothUp, smoothF);
@@ -584,7 +571,7 @@ function updateCamera(dt) {
   camera.up.copy(smoothUp);
   camera.lookAt(camLook);
 
-  const fov = 62 + THREE.MathUtils.clamp(player.v - 20, 0, 22) * 0.42 + player.boostPulse * 9;
+  const fov = 60 + THREE.MathUtils.clamp(player.v - 14, 0, 32) * 0.45 + player.boostPulse * 8;
   if (Math.abs(camera.fov - fov) > 0.05) {
     camera.fov = fov;
     camera.updateProjectionMatrix();
@@ -592,39 +579,59 @@ function updateCamera(dt) {
 }
 
 // ---------------------------------------------------------------- HUD
-function updateHud(d) {
-  el.era.textContent = eraLabel(player.s);
-  el.flow.textContent = `FLOW ${String(Math.floor(flow)).padStart(6, '0')}`;
+function updateHud() {
+  el.era.textContent = nightLabel(night);
+  el.flow.firstChild.textContent = `FLOW ${String(Math.floor(flow)).padStart(6, '0')}`;
+  el.pack.textContent = members.length ? `${members.length + 1} IN THE TROUPE` : 'SKATING SOLO';
   el.speed.textContent = `${Math.round(player.v * 3.6)} KM/H`;
-  let label, fill, color;
-  if (mode === 'leading') {
-    label = 'LEADING THE NIGHT';
-    fill = 100;
-    color = '#ff7ad9';
-  } else if (linked) {
-    label = 'LINKED — HOLD ON';
-    fill = 100;
-    color = '#ffd166';
+  if (dest) {
+    const d = destDist();
+    el.meterLabel.textContent = `TO ${venueName(night + 1)} · ${Math.max(0, Math.round(d))}M`;
+    el.meterFill.style.width = `${THREE.MathUtils.clamp(1 - d / dest.d0, 0, 1) * 100}%`;
+    el.meterFill.style.background = '#ffd166';
   } else {
-    const f = THREE.MathUtils.clamp(1 - (d - 6) / 70, 0, 1);
-    fill = f * 100;
-    color = '#ffffff';
-    label = d > 60 ? 'DRIFTING APART' : 'GETTING CLOSER';
+    el.meterLabel.textContent = 'THE NIGHT GOES ON';
+    el.meterFill.style.width = '100%';
   }
-  el.meterLabel.textContent = label;
-  el.meterFill.style.width = `${fill}%`;
-  el.meterFill.style.background = color;
 }
 
 // ---------------------------------------------------------------- loop
-addMember(ROSTER[rosterNext++], leaderS);
-
 window.__stepOnce = () => step(0.016);
 window.__test = {
   push: (dv = 25) => { player.v = Math.min(46, player.v + dv); },
   jump: () => { if (player.grounded) doJump(); },
   trip: () => { player.invulnT = 0; stumble(); },
-  warp: (ds = 30) => { respawn(player.s + ds, false); const nr = city.nearestS(player.p, player.routeIdx + Math.round(ds / 2.4)); player.routeIdx = nr.idx; player.s = nr.s; },
+  tp: (x, y, z) => {
+    player.p.set(x, y, z);
+    player.prevP.copy(player.p);
+    player.vel.set(0, 0, 0);
+    player.gravN.set(0, 1, 0);
+    player.n.set(0, 1, 0);
+    player.grounded = false;
+    player.box = null;
+  },
+  rotor: () => {
+    let best = null, bd = Infinity;
+    for (const r of city.rotors) {
+      const d = (r.box.rot.cx - player.p.x) ** 2 + (r.box.rot.cz - player.p.z) ** 2;
+      if (d < bd) { bd = d; best = r; }
+    }
+    return best ? { cx: best.box.rot.cx, cz: best.box.rot.cz, topY: best.box.max.y, w: best.box.rot.w } : null;
+  },
+  dest: () => dest ? { x: dest.pos.x, z: dest.pos.z, d: destDist() } : null,
+  recruit: () => {
+    let best = null, bd = Infinity;
+    for (const r of city.recruits) {
+      const d = r.p.distanceToSquared(player.p);
+      if (d < bd) { bd = d; best = r; }
+    }
+    return best ? { x: best.p.x, y: best.p.y, z: best.p.z, name: best.name } : null;
+  },
+  f: () => ({ x: +player.f.x.toFixed(2), z: +player.f.z.toFixed(2) }),
+  members: () => members.slice(0, 4).map(m => ({
+    x: +m.p.x.toFixed(1), y: +m.p.y.toFixed(1), z: +m.p.z.toFixed(1),
+    dp: +m.p.distanceTo(player.p).toFixed(1),
+  })),
 };
 
 const clock = new THREE.Clock();
@@ -632,8 +639,6 @@ function frame() {
   requestAnimationFrame(frame);
   step();
 }
-// Hidden tabs throttle timers hard; in test mode (__auto) run catch-up
-// substeps so automated runs keep real-time pace while backgrounded.
 let lastTick = performance.now();
 setInterval(() => {
   if (!document.hidden) { lastTick = performance.now(); return; }
@@ -649,35 +654,40 @@ function step(dtOverride) {
   if (window.__freeze) { composer.render(); return; }
   elapsed += dt;
 
-  city.ensure(player.p.z);
-  city.update(dt);
+  city.ensure(player.p);
+  city.update(dt, elapsed);
   updatePlayer(dt);
-  const d = updatePack(dt);
-  updateEra();
+  updateTroupe(dt);
   updateCamera(dt);
   updateToasts(dt);
-  if (playing) updateHud(d);
+  if (playing) updateHud();
 
-  const atm = blendedAtmosphere(player.s + 90);
+  nightF += (night - nightF) * Math.min(1, dt * 0.35);
+  const atm = blendedAtmosphere(nightF);
   scene.fog.color.copy(atm.horizon);
   ambient.color.copy(atm.ambient);
   dirLight.color.copy(atm.sun);
   dirLight.position.copy(player.p).add(LIGHT_OFF);
   dirLight.target.position.copy(player.p);
-  sky.update(dt, camera.position, player.p.z, atm);
+  fillLight.position.copy(player.p).add(FILL_OFF);
+  fillLight.target.position.copy(player.p);
+  fillLight.color.copy(atm.lamp);
+  sky.update(dt, camera.position, player.p, atm);
 
   audio.setSpeed(player.v, !player.grounded);
 
   window.__game = {
-    playing, mode, linked,
+    playing,
     p: { x: +player.p.x.toFixed(1), y: +player.p.y.toFixed(1), z: +player.p.z.toFixed(1) },
     n: `${player.n.x.toFixed(0)},${player.n.y.toFixed(0)},${player.n.z.toFixed(0)}`,
-    v: +player.v.toFixed(1), s: +player.s.toFixed(1),
+    v: +player.v.toFixed(1),
     grounded: player.grounded,
+    airT: +player.airT.toFixed(2),
+    tuck: +player.tuck.toFixed(2),
     flow: Math.floor(flow),
-    era: eraIndex(player.s), pack: members.length,
-    packDist: +(+d).toFixed(1), leadGap: +(leaderS - player.s).toFixed(1),
-    routeDist: +city.nearestS(player.p, player.routeIdx).dist.toFixed(1),
+    night, pack: members.length,
+    destDist: +destDist().toFixed(0),
+    onRotor: !!(player.box && player.box.rot),
   };
 
   composer.render();

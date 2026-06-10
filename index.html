@@ -57,7 +57,8 @@
   #hud.on { opacity: 1; }
   .corner { position: absolute; letter-spacing: 0.22em; font-size: 13px; }
   #era    { top: 22px; left: 26px; }
-  #flow   { top: 22px; right: 26px; text-align: right; }
+  #flow   { top: 22px; right: 26px; text-align: right; line-height: 1.7; }
+  #pack   { font-size: 11px; opacity: 0.8; }
   #speed  { bottom: 22px; right: 26px; text-align: right; font-size: 12px; opacity: 0.85; }
   #help   { bottom: 22px; left: 26px; font-size: 11px; opacity: 0.7; letter-spacing: 0.18em; transition: opacity 2s ease; }
 
@@ -135,12 +136,12 @@
   <div id="vignette"></div>
 
   <div id="hud">
-    <div id="era"   class="corner">THE BOARDWALK &middot; 1972</div>
-    <div id="flow"  class="corner">FLOW 000000</div>
+    <div id="era"   class="corner">NIGHT 1 &middot; THE BOARDWALK &middot; 1972</div>
+    <div id="flow"  class="corner">FLOW 000000<br /><span id="pack">SKATING SOLO</span></div>
     <div id="speed" class="corner">0 KM/H</div>
-    <div id="help"  class="corner">&larr;&rarr; carve &middot; &uarr; push &middot; space jump &middot; m sound &middot; r reset</div>
+    <div id="help"  class="corner">&larr;&rarr; turn &middot; &uarr; push &middot; &darr; brake &middot; shift low &middot; space jump &middot; m sound</div>
     <div id="meterWrap">
-      <div id="meterLabel">DRIFTING APART</div>
+      <div id="meterLabel">FOLLOW THE LIGHT</div>
       <div id="meterBar"><div id="meterFill"></div></div>
     </div>
     <div id="toast"></div>

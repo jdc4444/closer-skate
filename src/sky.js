@@ -110,24 +110,28 @@ export class Sky {
     scene.add(this.dust);
   }
 
-  update(dt, camPos, playerZ, atm) {
+  update(dt, camPos, playerPos, atm) {
     this.dome.position.copy(camPos);
     this.uniforms.top.value.copy(atm.skyTop);
     this.uniforms.horizon.value.copy(atm.horizon);
     this.uniforms.below.value.copy(atm.skyBelow);
     this.sun.material.color.copy(atm.sun);
-    this.sun.position.set(0, 14, playerZ + 640);
+    this.sun.position.set(playerPos.x, 14, playerPos.z + 640);
 
     for (const c of this.clouds) {
       c.position.x += c.userData.drift * dt;
-      if (c.position.z < playerZ - 140) c.position.z += 760;
-      if (c.position.z > playerZ + 660) c.position.z -= 760;
+      if (c.position.z < playerPos.z - 380) c.position.z += 760;
+      if (c.position.z > playerPos.z + 380) c.position.z -= 760;
+      if (c.position.x < playerPos.x - 420) c.position.x += 840;
+      if (c.position.x > playerPos.x + 420) c.position.x -= 840;
     }
     const dp = this.dust.geometry.attributes.position;
     for (let i = 0; i < dp.count; i++) {
-      const z = dp.getZ(i);
-      if (z < playerZ - 60) dp.setZ(i, z + 540);
-      else if (z > playerZ + 480) dp.setZ(i, z - 540);
+      const z = dp.getZ(i), x = dp.getX(i);
+      if (z < playerPos.z - 270) dp.setZ(i, z + 540);
+      else if (z > playerPos.z + 270) dp.setZ(i, z - 540);
+      if (x < playerPos.x - 270) dp.setX(i, x + 540);
+      else if (x > playerPos.x + 270) dp.setX(i, x - 540);
     }
     dp.needsUpdate = true;
   }

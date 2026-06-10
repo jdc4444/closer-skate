@@ -16,26 +16,47 @@ export function axisVec(a, s, out = new THREE.Vector3()) {
 }
 
 // Find the face supporting p along -n (normal == n), within maxDrop below feet.
+// Boxes with a `rot` record are rotating platforms: y-extents are world-space,
+// x/z bounds live in the platform's local (yawed) frame; only their horizontal
+// faces support.
 export function support(boxes, p, n, maxDrop = 0.9, grow = 0.06) {
   const a = axisOf(n);
   const s = comp(n, a) >= 0 ? 1 : -1;
   let best = null;
   for (const b of boxes) {
+    if (b.rot && a !== 1) continue;
     const q = s > 0 ? comp(b.max, a) : comp(b.min, a);
     const h = (comp(p, a) - q) * s;
     if (h < -0.08 || h > maxDrop) continue;
     let inside = true;
-    for (let k = 0; k < 3; k++) {
-      if (k === a) continue;
-      if (comp(p, k) < comp(b.min, k) - grow || comp(p, k) > comp(b.max, k) + grow) {
-        inside = false;
-        break;
+    if (b.rot) {
+      const cy = Math.cos(b.rot.yaw), sy = Math.sin(b.rot.yaw);
+      const dx = p.x - b.rot.cx, dz = p.z - b.rot.cz;
+      const lx = dx * cy + dz * sy;
+      const lz = -dx * sy + dz * cy;
+      inside = lx >= b.min.x - grow && lx <= b.max.x + grow &&
+               lz >= b.min.z - grow && lz <= b.max.z + grow;
+    } else {
+      for (let k = 0; k < 3; k++) {
+        if (k === a) continue;
+        if (comp(p, k) < comp(b.min, k) - grow || comp(p, k) > comp(b.max, k) + grow) {
+          inside = false;
+          break;
+        }
       }
     }
     if (!inside) continue;
     if (!best || h < best.h) best = { box: b, q, h };
   }
   return best;
+}
+
+// Point containment for flock slot projection (static boxes only).
+export function insideBox(p, b, grow = 0) {
+  if (b.rot) return false;
+  return p.x > b.min.x - grow && p.x < b.max.x + grow &&
+         p.y > b.min.y - grow && p.y < b.max.y + grow &&
+         p.z > b.min.z - grow && p.z < b.max.z + grow;
 }
 
 // Face blocking motion along axis k (sign sk) within dist, rising above the
@@ -47,6 +68,7 @@ export function wallAhead(boxes, p, n, k, sk, dist, r = 0.45) {
   const c = 3 - a - k;
   let best = null;
   for (const b of boxes) {
+    if (b.rot) continue;          // rotating platforms have no side collision
     const q = sk > 0 ? comp(b.min, k) : comp(b.max, k);
     const gap = (q - comp(p, k)) * sk;
     if (gap < -0.25 || gap > dist) continue;
@@ -130,6 +152,7 @@ export function stepGrounded(boxes, state, dist, ev) {
     }
     const b = state.box;
     if (!b) { ev.lost = true; return; }
+    if (b.rot) { ev.fell = true; return; }   // ran off a rotor: airborne, no wrap
     // which tangent bound did we run past on the box we were standing on?
     const aa = axisOf(state.n);
     let bestK = -1, bestOver = 0, bestSign = 1, bestBound = 0;

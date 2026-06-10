@@ -1,8 +1,6 @@
 // palettes.js — era moods. Porcelain architecture, saturated duochrome skies.
 import * as THREE from 'three';
 
-export const ERA_LEN = 400;     // metres of route per era
-
 export const ERAS = [
   { name: 'THE BOARDWALK · 1972',
     skyTop: 0x2c2a6e, horizon: 0xe06a72, skyBelow: 0x451530,
@@ -26,23 +24,24 @@ export const ERAS = [
     lamp: 0xffe2a8, sun: 0xfff6dc, ambient: 0xffdcc2 },
 ];
 
-export function eraIndex(s) { return Math.max(0, Math.floor(s / ERA_LEN)); }
-
-export function eraLabel(s) {
-  const i = eraIndex(s);
-  if (i < ERAS.length) return ERAS[i].name;
-  return `THE INFINITE DISCO · ${1972 + i * 10}`;
-}
-
 export function eraPalette(i) { return ERAS[((i % ERAS.length) + ERAS.length) % ERAS.length]; }
 
+// "NIGHT 3 · THE WHIRL · 1992"
+export function nightLabel(night) {
+  const base = eraPalette(night).name.split('·')[0].trim();
+  return `NIGHT ${night + 1} · ${base} · ${1972 + night * 10}`;
+}
+
+export function venueName(night) {
+  return eraPalette(night).name.split('·')[0].trim();
+}
+
+// nightFloat: night index + 0..1 transition into the next
 const _a = new THREE.Color(), _b = new THREE.Color();
-export function blendedAtmosphere(s) {
-  const i = eraIndex(s);
-  const f = (s - i * ERA_LEN) / ERA_LEN;
+export function blendedAtmosphere(nightFloat) {
+  const i = Math.floor(nightFloat);
+  const k = nightFloat - i;
   const A = eraPalette(i), B = eraPalette(i + 1);
-  const t = f < 0.86 ? 0 : (f - 0.86) / 0.14;
-  const k = t * t * (3 - 2 * t);
   const mix = (key) => _a.setHex(A[key]).lerp(_b.setHex(B[key]), k).clone();
   return {
     skyTop: mix('skyTop'), horizon: mix('horizon'), skyBelow: mix('skyBelow'),

@@ -1,12 +1,12 @@
-// city.js — endless chain of architectural set-pieces, Humanity-style:
-// porcelain monoliths on a floating boulevard. Each module contributes
-// collision boxes, decoration, and the pack's route across its surfaces
-// (streets, facades, rooftops, undersides, through windows).
+// city.js — an open city, generated in chunks around the skater.
+// Porcelain towers on wide plazas, rotating sky-platforms bridging roofs,
+// arch walls with window openings, lone skaters waiting to join your troupe,
+// and one glowing venue on the horizon: tonight's destination.
 import * as THREE from 'three';
-import { ERAS, eraIndex, eraPalette } from './palettes.js';
+import { eraPalette } from './palettes.js';
+import { makeSkater } from './skaters.js';
 
-export const SW = 13;          // street half-width
-const STREET_TH = 6;           // street slab thickness
+export const CHUNK = 96;
 
 function makeWindowTexture() {
   const c = document.createElement('canvas');
@@ -16,7 +16,7 @@ function makeWindowTexture() {
   g.fillRect(0, 0, 128, 128);
   for (let i = 0; i < 6; i++) {
     for (let j = 0; j < 8; j++) {
-      if (Math.random() < 0.38) {
+      if (Math.random() < 0.5) {
         g.fillStyle = Math.random() < 0.78 ? '#ffd9a0' : '#bfe2ff';
         g.globalAlpha = 0.5 + Math.random() * 0.5;
         g.fillRect(10 + i * 19, 7 + j * 15, 8, 6);
@@ -29,26 +29,29 @@ function makeWindowTexture() {
   return tex;
 }
 
+const RECRUIT_COLORS = [0x35e0c8, 0xffd166, 0xff7a5a, 0xc79bff, 0x9fffcf, 0xff4f6e, 0x8ad9ff, 0xffb6f2];
+const RECRUIT_NAMES = ['TINY', 'BENNIE', 'LEVON', 'NIKITA', 'DANIEL', 'ROCKET', 'PHILLY', 'AMY',
+  'JOHNNY', 'SUSIE', 'JACKIE', 'STARLIGHT', 'RAY', 'IDA', 'MONA', 'JETS'];
+
 export class City {
   constructor(scene) {
     this.scene = scene;
     this.windowTex = makeWindowTexture();
     this.matCache = new Map();
-    this.modules = [];
-    this.route = [];            // {p, n, s, jump}
-    this.rings = [];
+    this.chunks = new Map();      // "cx,cz" -> chunk
+    this.rotors = [];             // {box, mesh, w}
+    this.recruits = [];           // {p, name, color, rig, phase, chunk}
     this.windows = [];
-    this.animated = [];
-    this.cursorZ = -40;
-    this.cursorX = 0;
-    this.count = 0;
-    this.totalS = 0;
-    this.prevEra = 0;
+    this.night = 0;
+    this.recruitCounter = 0;
+    this.beacon = null;
     this._boxCache = { key: '', boxes: [] };
+    this._q = new THREE.Quaternion();
+    this._m = new THREE.Matrix4();
   }
 
-  mats(eraI) {
-    const key = ((eraI % ERAS.length) + ERAS.length) % ERAS.length;
+  mats(night) {
+    const key = ((night % 5) + 5) % 5;
     if (!this.matCache.has(key)) {
       const p = eraPalette(key);
       this.matCache.set(key, {
@@ -60,9 +63,9 @@ export class City {
         }),
         street: new THREE.MeshStandardMaterial({ color: p.street, roughness: 0.96, metalness: 0 }),
         edge: new THREE.LineBasicMaterial({ color: p.trim, transparent: true, opacity: 0.5 }),
-        edgeSoft: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 }),
-        ring: new THREE.MeshBasicMaterial({ color: p.neon2, transparent: true, opacity: 0.95, fog: true }),
-        gate: new THREE.MeshBasicMaterial({ color: p.trim, transparent: true, opacity: 0.8, fog: true }),
+        edgeSoft: new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.16 }),
+        rotor: new THREE.MeshStandardMaterial({ color: p.building, roughness: 0.85, metalness: 0,
+          emissive: p.trim, emissiveIntensity: 0.08 }),
         cone: new THREE.MeshBasicMaterial({
           color: p.lamp, transparent: true, opacity: 0.07,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
@@ -73,58 +76,47 @@ export class City {
         }),
         lampHead: new THREE.MeshBasicMaterial({ color: p.lamp }),
         pole: new THREE.MeshStandardMaterial({ color: 0x2a2a38, roughness: 0.8 }),
-        crumb: new THREE.MeshBasicMaterial({
-          color: p.trim, transparent: true, opacity: 0.32,
-          blending: THREE.AdditiveBlending, depthWrite: false,
+        beam: new THREE.MeshBasicMaterial({
+          color: 0xffe9b0, transparent: true, opacity: 0.34,
+          blending: THREE.AdditiveBlending, depthWrite: false, fog: false, side: THREE.DoubleSide,
+        }),
+        gold: new THREE.MeshStandardMaterial({
+          color: 0xf6dfb2, roughness: 0.55, metalness: 0.15,
+          emissive: 0xffc46a, emissiveIntensity: 0.55,
         }),
       });
     }
     return this.matCache.get(key);
   }
 
-  // ---------------------------------------------------------- builders
-  box(mod, M, min, max, { windows = false, edges = true, trim = false } = {}) {
+  // -------------------------------------------------------------- helpers
+  box(chunk, M, min, max, { windows = false, edges = true, trim = false, mat = null } = {}) {
     const size = new THREE.Vector3().subVectors(max, min);
     const mid = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5);
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
-    let mat = windows ? M.buildingWin.clone() : (windows === false && size.y < 2.5 && size.x < 4 ? M.building : M.building);
+    let useMat = mat ?? M.building;
     if (windows) {
-      mat.emissiveMap = this.windowTex.clone();
-      mat.emissiveMap.repeat.set(Math.max(1, Math.round(size.x / 7)), Math.max(1, Math.round(size.y / 7)));
+      useMat = M.buildingWin.clone();
+      useMat.emissiveMap = this.windowTex.clone();
+      useMat.emissiveMap.repeat.set(Math.max(1, Math.round(size.x / 7)), Math.max(1, Math.round(size.y / 7)));
     }
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(geo, useMat);
     mesh.position.copy(mid);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    mod.group.add(mesh);
+    chunk.group.add(mesh);
     if (edges) {
       const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), trim ? M.edge : M.edgeSoft);
       line.position.copy(mid);
-      mod.group.add(line);
+      chunk.group.add(line);
     }
     const rec = { min: min.clone(), max: max.clone() };
-    mod.boxes.push(rec);
+    chunk.boxes.push(rec);
     return rec;
   }
 
-  street(mod, M, z0, len) {
-    const min = new THREE.Vector3(-SW, -STREET_TH, z0 - 0.4);
-    const max = new THREE.Vector3(SW, 0, z0 + len + 0.4);
-    const size = max.clone().sub(min);
-    const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
-    const mesh = new THREE.Mesh(geo, M.street);
-    mesh.position.copy(min.clone().add(max).multiplyScalar(0.5));
-    mesh.receiveShadow = true;
-    mesh.castShadow = true;
-    mod.group.add(mesh);
-    const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edgeSoft);
-    line.position.copy(mesh.position);
-    mod.group.add(line);
-    mod.boxes.push({ min, max });
-  }
-
-  lamp(mod, M, x, z) {
-    const g = mod.group;
+  lamp(chunk, M, x, z) {
+    const g = chunk.group;
     const pole = new THREE.Mesh(new THREE.BoxGeometry(0.22, 8.6, 0.22), M.pole);
     pole.position.set(x, 4.3, z);
     pole.castShadow = true;
@@ -141,375 +133,181 @@ export class City {
     g.add(pool);
   }
 
-  ring(mod, M, p, axis, r = 3) {
-    const mesh = new THREE.Mesh(new THREE.TorusGeometry(r, 0.13, 10, 36), M.ring.clone());
-    mesh.position.copy(p);
-    if (axis === 0) mesh.rotation.y = Math.PI / 2;
-    if (axis === 1) mesh.rotation.x = Math.PI / 2;
-    mod.group.add(mesh);
-    const rec = { p: p.clone(), axis, r, taken: false, mesh };
-    this.rings.push(rec);
-    mod.rings.push(rec);
-  }
-
-  windowRect(mod, zMin, zMax, xMin, xMax, yMin, yMax) {
-    const rec = { zMin, zMax, xMin, xMax, yMin, yMax, taken: false };
-    this.windows.push(rec);
-    mod.windows.push(rec);
-  }
-
-  crumbs(mod, M, pts) {
-    for (let i = 2; i < pts.length - 1; i += 3) {
-      const a = pts[i];
-      const dir = pts[i + 1].p.clone().sub(pts[i - 1].p).normalize();
-      const geo = new THREE.PlaneGeometry(3.4, 0.42);
-      const m = new THREE.Mesh(geo, M.crumb);
-      const up = a.n;
-      const right = new THREE.Vector3().crossVectors(up, dir).normalize();
-      const mtx = new THREE.Matrix4().makeBasis(dir, right, up);
-      m.quaternion.setFromRotationMatrix(mtx);
-      m.position.copy(a.p).addScaledVector(up, 0.07);
-      mod.group.add(m);
-    }
-  }
-
-  // route helper: straight line of waypoints
-  line(pts, from, to, n, { jump = false, step = 2.4 } = {}) {
-    const d = to.clone().sub(from);
-    const len = d.length();
-    const count = Math.max(1, Math.round(len / step));
-    for (let i = 1; i <= count; i++) {
-      const p = from.clone().addScaledVector(d, i / count);
-      pts.push({ p, n: n.clone(), jump: jump && i === count });
-    }
-  }
-
-  // ---------------------------------------------------------- modules
-  buildModule(kind, z0, entryX, eraI) {
-    const M = this.mats(eraI);
-    const mod = { group: new THREE.Group(), boxes: [], rings: [], windows: [], z0, kind };
-    const pts = [];
-    const Y = new THREE.Vector3(0, 1, 0);
-    const NZ = new THREE.Vector3(0, 0, -1);
-    const PZ = new THREE.Vector3(0, 0, 1);
-    const NY = new THREE.Vector3(0, -1, 0);
-    let len = 100, exitX = 0;
-    const start = new THREE.Vector3(entryX, 0, z0);
-
-    if (kind === 'boulevard') {
-      len = 100;
-      this.street(mod, M, z0, len);
-      // weaving line
-      let prev = start.clone();
-      for (let z = z0 + 6; z <= z0 + len; z += 6) {
-        const t = (z - z0) / len;
-        const x = THREE.MathUtils.lerp(entryX, 0, Math.min(1, t * 2.5)) +
-                  Math.sin(z * 0.09) * 4.6 * Math.min(1, t * 3);
-        const next = new THREE.Vector3(x, 0, z);
-        this.line(pts, prev, next, Y);
-        prev = next;
+  // -------------------------------------------------------------- chunks
+  ensure(p) {
+    const ccx = Math.floor(p.x / CHUNK), ccz = Math.floor(p.z / CHUNK);
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        const key = `${ccx + dx},${ccz + dz}`;
+        if (!this.chunks.has(key)) this.chunks.set(key, this.buildChunk(ccx + dx, ccz + dz));
       }
-      exitX = prev.x;
-      for (let z = z0 + 14; z < z0 + len; z += 26) {
-        this.lamp(mod, M, ((z / 26 | 0) % 2 ? -9.5 : 9.5), z);
-      }
-      // planters off the line
-      const rng = mulberry32(z0 * 7919 ^ 0x9e3779b9);
-      for (let i = 0; i < 7; i++) {
-        const z = z0 + 12 + rng() * (len - 24);
-        const lineX = Math.sin(z * 0.09) * 4.6;
-        let x = (rng() < 0.5 ? -1 : 1) * (3 + rng() * 8);
-        if (Math.abs(x - lineX) < 3.2) x += x > lineX ? 3 : -3;
-        if (Math.abs(x) > SW - 1.5) continue;
-        const s = 0.9 + rng() * 0.9;
-        this.box(mod, M,
-          new THREE.Vector3(x - s, 0, z - s), new THREE.Vector3(x + s, 1.0 + rng() * 0.7, z + s));
-      }
-      const ringZ = z0 + 52;
-      this.ring(mod, M, new THREE.Vector3(Math.sin(ringZ * 0.09) * 4.6, 3.1, ringZ), 2);
     }
-
-    if (kind === 'tower') {
-      len = 120;
-      const H = 24 + (eraI % 3) * 4;
-      this.street(mod, M, z0, len);
-      const f0 = z0 + 46, f1 = z0 + 62;
-      this.box(mod, M, new THREE.Vector3(-SW, 0, f0), new THREE.Vector3(SW, H, f1), { windows: true, trim: true });
-      this.line(pts, start, new THREE.Vector3(0, 0, f0), Y);
-      this.line(pts, new THREE.Vector3(0, 0, f0), new THREE.Vector3(0, H, f0), NZ);
-      this.line(pts, new THREE.Vector3(0, H, f0), new THREE.Vector3(0, H, f1), Y);
-      this.line(pts, new THREE.Vector3(0, H, f1), new THREE.Vector3(0, 0, f1), PZ);
-      this.line(pts, new THREE.Vector3(0, 0, f1), new THREE.Vector3(0, 0, z0 + len), Y);
-      this.ring(mod, M, new THREE.Vector3(0, H * 0.55, f0), 2);
-      this.lamp(mod, M, -9.5, z0 + 20);
-      this.lamp(mod, M, 9.5, z0 + 34);
-      this.lamp(mod, M, -9.5, z0 + 78);
-      this.lamp(mod, M, 9.5, z0 + 100);
-    }
-
-    if (kind === 'windowWall') {
-      len = 90;
-      this.street(mod, M, z0, len);
-      const w0 = z0 + 46, w1 = z0 + 49.5;
-      // columns + lintel leave two street-level openings
-      this.box(mod, M, new THREE.Vector3(-SW, 0, w0), new THREE.Vector3(-9, 7, w1), { trim: true });
-      this.box(mod, M, new THREE.Vector3(-3, 0, w0), new THREE.Vector3(3, 7, w1), { trim: true });
-      this.box(mod, M, new THREE.Vector3(9, 0, w0), new THREE.Vector3(SW, 7, w1), { trim: true });
-      this.box(mod, M, new THREE.Vector3(-SW, 7, w0), new THREE.Vector3(SW, 15, w1), { windows: true, trim: true });
-      this.windowRect(mod, w0 - 0.6, w1 + 0.6, -9, -3, 0, 7);
-      this.windowRect(mod, w0 - 0.6, w1 + 0.6, 3, 9, 0, 7);
-      this.line(pts, start, new THREE.Vector3(-6, 0, z0 + 34), Y);
-      this.line(pts, new THREE.Vector3(-6, 0, z0 + 34), new THREE.Vector3(-6, 0, z0 + 58), Y);
-      this.line(pts, new THREE.Vector3(-6, 0, z0 + 58), new THREE.Vector3(0, 0, z0 + len), Y);
-      this.lamp(mod, M, 9.5, z0 + 24);
-      this.lamp(mod, M, -9.5, z0 + 64);
-      const rz = z0 + 70;
-      this.ring(mod, M, new THREE.Vector3(-2, 3.1, rz), 2);
-    }
-
-    if (kind === 'rooftops') {
-      len = 170;
-      this.street(mod, M, z0, len);
-      const towers = [
-        { a: z0 + 40, b: z0 + 62, H: 18 },
-        { a: z0 + 67, b: z0 + 89, H: 15 },
-        { a: z0 + 94, b: z0 + 116, H: 12 },
-      ];
-      for (const t of towers) {
-        this.box(mod, M, new THREE.Vector3(-SW, 0, t.a), new THREE.Vector3(SW, t.H, t.b), { windows: true, trim: true });
+    for (const [key, ch] of this.chunks) {
+      const [cx, cz] = key.split(',').map(Number);
+      if (Math.abs(cx - ccx) > 3 || Math.abs(cz - ccz) > 3) {
+        this.disposeChunk(ch);
+        this.chunks.delete(key);
       }
-      this.line(pts, start, new THREE.Vector3(0, 0, towers[0].a), Y);
-      this.line(pts, new THREE.Vector3(0, 0, towers[0].a), new THREE.Vector3(0, towers[0].H, towers[0].a), NZ);
-      for (let i = 0; i < towers.length; i++) {
-        const t = towers[i];
-        this.line(pts, new THREE.Vector3(0, t.H, t.a), new THREE.Vector3(0, t.H, t.b), Y, { jump: i < towers.length - 1 });
-        if (i < towers.length - 1) {
-          const nx = towers[i + 1];
-          this.line(pts, new THREE.Vector3(0, t.H, t.b), new THREE.Vector3(0, nx.H, nx.a + 1.5), Y);
-          this.ring(mod, M, new THREE.Vector3(0, t.H + 1.6, (t.b + nx.a) / 2), 2);
-        }
-      }
-      const last = towers[towers.length - 1];
-      this.line(pts, new THREE.Vector3(0, last.H, last.b), new THREE.Vector3(0, 0, last.b), PZ);
-      this.line(pts, new THREE.Vector3(0, 0, last.b), new THREE.Vector3(0, 0, z0 + len), Y);
-      // rooftop clutter off the line
-      for (const t of towers) {
-        this.box(mod, M, new THREE.Vector3(6, t.H, t.a + 5), new THREE.Vector3(8.4, t.H + 1.4, t.a + 7.4));
-        this.box(mod, M, new THREE.Vector3(-8.4, t.H, t.b - 8), new THREE.Vector3(-6, t.H + 1.2, t.b - 5.6));
-      }
-      this.lamp(mod, M, -9.5, z0 + 20);
-      this.lamp(mod, M, 9.5, z0 + 140);
-    }
-
-    if (kind === 'fold') {
-      len = 130;
-      this.street(mod, M, z0, len);
-      const a = z0 + 48, b = z0 + 60;
-      // arch: pillars + lintel (tops coplanar at y=26)
-      this.box(mod, M, new THREE.Vector3(-17, 0, a), new THREE.Vector3(-13, 26, b), { windows: true, trim: true });
-      this.box(mod, M, new THREE.Vector3(13, 0, a), new THREE.Vector3(17, 26, b), { windows: true, trim: true });
-      this.box(mod, M, new THREE.Vector3(-13, 22, a), new THREE.Vector3(13, 26, b), { trim: true });
-      // perforated wall right behind the arch (the way down + the way through)
-      const w0 = b, w1 = b + 3;
-      this.box(mod, M, new THREE.Vector3(-SW, 0, w0), new THREE.Vector3(-9, 7, w1), { trim: true });
-      this.box(mod, M, new THREE.Vector3(-3, 0, w0), new THREE.Vector3(3, 7, w1), { trim: true });
-      this.box(mod, M, new THREE.Vector3(9, 0, w0), new THREE.Vector3(SW, 7, w1), { trim: true });
-      this.box(mod, M, new THREE.Vector3(-SW, 7, w0), new THREE.Vector3(SW, 26, w1), { windows: true, trim: true });
-      this.windowRect(mod, w0 - 0.6, w1 + 0.6, -9, -3, 0, 7);
-      this.windowRect(mod, w0 - 0.6, w1 + 0.6, 3, 9, 0, 7);
-      // route: up the left pillar face, across the arch, around the lip,
-      // upside-down beneath the lintel, down the wall, loop through a window
-      this.line(pts, start, new THREE.Vector3(-15, 0, a), Y);
-      this.line(pts, new THREE.Vector3(-15, 0, a), new THREE.Vector3(-15, 26, a), NZ);
-      this.line(pts, new THREE.Vector3(-15, 26, a), new THREE.Vector3(-15, 26, a + 6), Y);
-      this.line(pts, new THREE.Vector3(-15, 26, a + 6), new THREE.Vector3(0, 26, a + 6), Y);
-      this.line(pts, new THREE.Vector3(0, 26, a + 6), new THREE.Vector3(0, 26, a), Y);
-      this.line(pts, new THREE.Vector3(0, 26, a), new THREE.Vector3(0, 22, a), NZ, { step: 1.4 });
-      this.line(pts, new THREE.Vector3(0, 22, a), new THREE.Vector3(0, 22, b), NY);        // the ceiling ride
-      this.line(pts, new THREE.Vector3(0, 22, b), new THREE.Vector3(0, 0, b), NZ);
-      this.line(pts, new THREE.Vector3(0, 0, b), new THREE.Vector3(-4.5, 0, b - 5), Y, { step: 1.8 });
-      this.line(pts, new THREE.Vector3(-4.5, 0, b - 5), new THREE.Vector3(-6.5, 0, b - 2), Y, { step: 1.8 });
-      this.line(pts, new THREE.Vector3(-6.5, 0, b - 2), new THREE.Vector3(-6.5, 0, w1 + 3), Y, { step: 1.8 });
-      this.line(pts, new THREE.Vector3(-6.5, 0, w1 + 3), new THREE.Vector3(0, 0, z0 + len), Y);
-      this.ring(mod, M, new THREE.Vector3(0, 20.2, (a + b) / 2), 2, 2.6);
-      this.lamp(mod, M, 9.5, z0 + 24);
-      this.lamp(mod, M, -9.5, z0 + 100);
-    }
-
-    if (kind === 'canyon') {
-      len = 95;
-      this.street(mod, M, z0, len);
-      const h1 = 20 + (eraI % 2) * 6;
-      this.box(mod, M, new THREE.Vector3(-26, 0, z0 + 16), new THREE.Vector3(-14, h1, z0 + 78), { windows: true, trim: true });
-      this.box(mod, M, new THREE.Vector3(14, 0, z0 + 16), new THREE.Vector3(26, h1 - 4, z0 + 78), { windows: true, trim: true });
-      let prev = start.clone();
-      for (let z = z0 + 8; z <= z0 + len; z += 8) {
-        const t = (z - z0) / len;
-        const x = THREE.MathUtils.lerp(entryX, 0, Math.min(1, t * 3)) + Math.sin(z * 0.13) * 5.5 * Math.min(1, t * 3);
-        const next = new THREE.Vector3(x, 0, z);
-        this.line(pts, prev, next, Y);
-        prev = next;
-      }
-      exitX = prev.x;
-      const rng = mulberry32(z0 * 31337 ^ 0x51ed27);
-      for (let i = 0; i < 6; i++) {
-        const z = z0 + 18 + rng() * (len - 32);
-        const lineX = Math.sin(z * 0.13) * 5.5;
-        let x = (rng() < 0.5 ? -1 : 1) * (4 + rng() * 7);
-        if (Math.abs(x - lineX) < 3.4) x += x > lineX ? 3.4 : -3.4;
-        if (Math.abs(x) > SW - 1.6) continue;
-        const s = 0.8 + rng() * 0.8;
-        this.box(mod, M, new THREE.Vector3(x - s, 0, z - 0.9), new THREE.Vector3(x + s, 1.1, z + 0.9));
-      }
-      this.lamp(mod, M, -9.5, z0 + 30);
-      this.lamp(mod, M, 9.5, z0 + 58);
-      const rz = z0 + 40;
-      this.ring(mod, M, new THREE.Vector3(Math.sin(rz * 0.13) * 5.5, 3.1, rz), 2);
-    }
-
-    // background skyline, floating beside the boulevard
-    const rng = mulberry32((z0 * 2654435761) >>> 0);
-    for (let i = 0; i < 4; i++) {
-      const side = rng() < 0.5 ? -1 : 1;
-      const x0 = side * (20 + rng() * 26);
-      const w = 6 + rng() * 10, d = 8 + rng() * 14, h = 14 + rng() * 30;
-      const zb = z0 + rng() * (len - d);
-      const base = -22 - rng() * 10;
-      this.box(mod, M,
-        new THREE.Vector3(Math.min(x0, x0 + side * w), base, zb),
-        new THREE.Vector3(Math.max(x0, x0 + side * w), base + h + 22, zb + d),
-        { windows: rng() < 0.8, trim: rng() < 0.4 });
-    }
-
-    this.crumbs(mod, M, pts);
-    mod.len = len;
-    mod.exitX = exitX;
-    mod.routePts = pts;
-    return mod;
-  }
-
-  // ---------------------------------------------------------- chain mgmt
-  static SEQ = ['boulevard', 'tower', 'boulevard', 'windowWall', 'rooftops', 'boulevard', 'fold', 'canyon'];
-
-  ensure(playerZ) {
-    while (this.cursorZ < playerZ + 430) {
-      const kind = this.count === 0 ? 'boulevard' : City.SEQ[this.count % City.SEQ.length];
-      const eraI = eraIndex(this.totalS);
-      const mod = this.buildModule(kind, this.cursorZ, this.cursorX, eraI);
-
-      // era gate when the era flips at this module
-      if (eraI > this.prevEra) {
-        this.prevEra = eraI;
-        const M = this.mats(eraI);
-        const gate = new THREE.Group();
-        const torus = new THREE.Mesh(new THREE.TorusGeometry(19, 0.9, 12, 64), M.gate.clone());
-        torus.material.opacity = 0.55;
-        gate.add(torus);
-        for (let f = 0; f < 4; f++) {
-          const fin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 9, 0.6), M.ring);
-          const ang = f * Math.PI / 2;
-          fin.position.set(Math.cos(ang) * 19, Math.sin(ang) * 19, 0);
-          fin.rotation.z = ang + Math.PI / 2;
-          gate.add(fin);
-        }
-        gate.position.set(0, 8, this.cursorZ + 4);
-        mod.group.add(gate);
-        this.animated.push({ mesh: gate, spin: 0.1, mod });
-      }
-
-      // accumulate route arc-length
-      let s = this.totalS;
-      let last = this.route.length ? this.route[this.route.length - 1].p : new THREE.Vector3(this.cursorX, 0, this.cursorZ);
-      for (const pt of mod.routePts) {
-        s += pt.p.distanceTo(last);
-        last = pt.p;
-        pt.s = s;
-        this.route.push(pt);
-      }
-      this.totalS = s;
-      mod.sEnd = s;
-
-      this.scene.add(mod.group);
-      this.modules.push(mod);
-      this.cursorZ += mod.len;
-      this.cursorX = mod.exitX;
-      this.count++;
-    }
-    // dispose far behind
-    while (this.modules.length && this.modules[0].z0 + this.modules[0].len < playerZ - 130) {
-      const m = this.modules.shift();
-      this.animated = this.animated.filter(a => a.mod !== m);
-      this.rings = this.rings.filter(r => !m.rings.includes(r));
-      this.windows = this.windows.filter(w => !m.windows.includes(w));
-      m.group.traverse(o => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material && o.material.emissiveMap && o.material.emissiveMap !== this.windowTex) {
-          o.material.emissiveMap.dispose();
-          o.material.dispose();
-        }
-      });
-      this.scene.remove(m.group);
     }
     this._boxCache.key = '';
   }
 
-  activeBoxes(z) {
-    const key = this.modules.map(m => m.z0).join(',') + '|' + Math.round(z / 20);
+  buildChunk(cx, cz) {
+    const M = this.mats(this.night);
+    const chunk = { group: new THREE.Group(), boxes: [], cx, cz, rotors: [], recruits: [], windows: [] };
+    const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663)) >>> 0);
+    const x0 = cx * CHUNK, z0 = cz * CHUNK;
+
+    // plaza floor
+    this.box(chunk, M,
+      new THREE.Vector3(x0 - 0.3, -6, z0 - 0.3),
+      new THREE.Vector3(x0 + CHUNK + 0.3, 0, z0 + CHUNK + 0.3),
+      { edges: false, mat: M.street });
+
+    // towers (non-overlapping footprints with street gaps)
+    const towers = [];
+    const tries = 7;
+    for (let i = 0; i < tries && towers.length < 4; i++) {
+      const w = 11 + rng() * 12, d = 11 + rng() * 12;
+      const tx = x0 + 8 + rng() * (CHUNK - 16 - w);
+      const tz = z0 + 8 + rng() * (CHUNK - 16 - d);
+      let ok = true;
+      for (const t of towers) {
+        if (tx < t.x + t.w + 8 && tx + w + 8 > t.x && tz < t.z + t.d + 8 && tz + d + 8 > t.z) { ok = false; break; }
+      }
+      if (!ok) continue;
+      const h = 8 + Math.pow(rng(), 1.6) * 32;
+      towers.push({ x: tx, z: tz, w, d, h });
+      this.box(chunk, M,
+        new THREE.Vector3(tx, 0, tz), new THREE.Vector3(tx + w, h, tz + d),
+        { windows: true, trim: rng() < 0.45 });
+      // rooftop props
+      if (rng() < 0.6) {
+        const px = tx + 2 + rng() * (w - 5), pz = tz + 2 + rng() * (d - 5);
+        this.box(chunk, M, new THREE.Vector3(px, h, pz), new THREE.Vector3(px + 2.2, h + 1.3, pz + 2.2));
+      }
+    }
+
+    // rotating platform bridging two towers
+    if (towers.length >= 2 && rng() < 0.5) {
+      const t1 = towers[0], t2 = towers[1];
+      const cxr = (t1.x + t1.w / 2 + t2.x + t2.w / 2) / 2;
+      const czr = (t1.z + t1.d / 2 + t2.z + t2.d / 2) / 2;
+      const topY = Math.max(7, Math.min(t1.h, t2.h) - rng() * 3);
+      const hw = 8 + rng() * 5, hd = 2.4 + rng() * 1.2;
+      const w = (rng() < 0.5 ? -1 : 1) * (0.12 + rng() * 0.18);
+      const geo = new THREE.BoxGeometry(hw * 2, 1.2, hd * 2);
+      const mesh = new THREE.Mesh(geo, M.rotor);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.position.set(cxr, topY - 0.6, czr);
+      const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+      mesh.add(line);
+      chunk.group.add(mesh);
+      const boxRec = {
+        min: new THREE.Vector3(-hw, topY - 1.2, -hd),
+        max: new THREE.Vector3(hw, topY, hd),
+        rot: { cx: cxr, cz: czr, yaw: rng() * Math.PI, w },
+      };
+      chunk.boxes.push(boxRec);
+      const rotor = { box: boxRec, mesh };
+      chunk.rotors.push(rotor);
+      this.rotors.push(rotor);
+    }
+
+    // arch wall with window openings, somewhere on the plaza
+    if (rng() < 0.3) {
+      const wx = x0 + 14 + rng() * (CHUNK - 56);
+      const wz = z0 + 12 + rng() * (CHUNK - 28);
+      const W = 26;
+      this.box(chunk, M, new THREE.Vector3(wx, 0, wz), new THREE.Vector3(wx + 4, 7, wz + 3.4), { trim: true });
+      this.box(chunk, M, new THREE.Vector3(wx + 10, 0, wz), new THREE.Vector3(wx + 16, 7, wz + 3.4), { trim: true });
+      this.box(chunk, M, new THREE.Vector3(wx + 22, 0, wz), new THREE.Vector3(wx + W, 7, wz + 3.4), { trim: true });
+      this.box(chunk, M, new THREE.Vector3(wx, 7, wz), new THREE.Vector3(wx + W, 13, wz + 3.4), { windows: true, trim: true });
+      const recs = [
+        { zMin: wz - 0.6, zMax: wz + 4, xMin: wx + 4, xMax: wx + 10, yMin: 0, yMax: 7, taken: false },
+        { zMin: wz - 0.6, zMax: wz + 4, xMin: wx + 16, xMax: wx + 22, yMin: 0, yMax: 7, taken: false },
+      ];
+      for (const r of recs) { this.windows.push(r); chunk.windows.push(r); }
+    }
+
+    // lamps
+    const lampN = 2 + Math.floor(rng() * 2);
+    for (let i = 0; i < lampN; i++) {
+      this.lamp(chunk, M, x0 + 10 + rng() * (CHUNK - 20), z0 + 10 + rng() * (CHUNK - 20));
+    }
+
+    // a lone skater waiting for a troupe
+    if (rng() < 0.5) {
+      const color = RECRUIT_COLORS[this.recruitCounter % RECRUIT_COLORS.length];
+      const name = RECRUIT_NAMES[this.recruitCounter % RECRUIT_NAMES.length];
+      this.recruitCounter++;
+      let pos;
+      if (towers.length && rng() < 0.3) {
+        const t = towers[Math.floor(rng() * towers.length)];
+        pos = new THREE.Vector3(t.x + t.w / 2, t.h, t.z + t.d / 2);
+      } else {
+        pos = new THREE.Vector3(x0 + 16 + rng() * (CHUNK - 32), 0, z0 + 16 + rng() * (CHUNK - 32));
+      }
+      const rig = makeSkater({ outfit: color, dress: rng() < 0.7 });
+      this.scene.add(rig.root);
+      const rec = { p: pos, name, color, rig, phase: rng() * Math.PI * 2, chunk };
+      chunk.recruits.push(rec);
+      this.recruits.push(rec);
+    }
+
+    this.scene.add(chunk.group);
+    return chunk;
+  }
+
+  disposeChunk(ch) {
+    this.rotors = this.rotors.filter(r => !ch.rotors.includes(r));
+    this.windows = this.windows.filter(w => !ch.windows.includes(w));
+    for (const rec of ch.recruits) {
+      this.scene.remove(rec.rig.root);
+      rec.rig.root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    }
+    this.recruits = this.recruits.filter(r => !ch.recruits.includes(r));
+    ch.group.traverse(o => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material && o.material.emissiveMap && o.material.emissiveMap !== this.windowTex) {
+        o.material.emissiveMap.dispose();
+        o.material.dispose();
+      }
+    });
+    this.scene.remove(ch.group);
+  }
+
+  activeBoxes(p) {
+    const ccx = Math.floor(p.x / CHUNK), ccz = Math.floor(p.z / CHUNK);
+    const key = `${ccx},${ccz},${this.chunks.size},${this.beacon ? 1 : 0}`;
     if (this._boxCache.key === key) return this._boxCache.boxes;
     const out = [];
-    for (const m of this.modules) {
-      if (m.z0 + m.len < z - 60 || m.z0 > z + 70) continue;
-      out.push(...m.boxes);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const ch = this.chunks.get(`${ccx + dx},${ccz + dz}`);
+        if (ch) out.push(...ch.boxes);
+      }
+    }
+    if (this.beacon) {
+      const d2 = (p.x - this.beacon.pos.x) ** 2 + (p.z - this.beacon.pos.z) ** 2;
+      if (d2 < 150 * 150) out.push(...this.beacon.boxes);
     }
     this._boxCache.key = key;
     this._boxCache.boxes = out;
     return out;
   }
 
-  sampleRoute(s) {
-    const r = this.route;
-    if (!r.length) return null;
-    if (s <= r[0].s) return { p: r[0].p.clone(), n: r[0].n.clone(), f: new THREE.Vector3(0, 0, 1), jump: false };
-    if (s >= r[r.length - 1].s) {
-      const e = r[r.length - 1];
-      return { p: e.p.clone(), n: e.n.clone(), f: new THREE.Vector3(0, 0, 1), jump: false };
-    }
-    let lo = 0, hi = r.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (r[mid].s <= s) lo = mid; else hi = mid;
-    }
-    const A = r[lo], B = r[hi];
-    const t = (s - A.s) / Math.max(1e-6, B.s - A.s);
-    const p = A.p.clone().lerp(B.p, t);
-    const f = B.p.clone().sub(A.p).normalize();
-    return { p, n: A.n.clone(), f, jump: !!A.jump, idx: lo };
-  }
-
-  nearestS(p, fromIdx) {
-    const r = this.route;
-    if (!r.length) return { s: 0, idx: 0, dist: 0 };
-    let bestI = Math.max(0, Math.min(fromIdx, r.length - 1));
-    let bestD = Infinity;
-    const i0 = Math.max(0, fromIdx - 8);
-    const i1 = Math.min(r.length - 1, fromIdx + 45);
-    for (let i = i0; i <= i1; i++) {
-      const d = r[i].p.distanceToSquared(p);
-      if (d < bestD) { bestD = d; bestI = i; }
-    }
-    return { s: r[bestI].s, idx: bestI, dist: Math.sqrt(bestD) };
-  }
-
-  tryRing(p) {
-    for (const r of this.rings) {
-      if (r.taken) continue;
-      const ax = r.axis;
-      if (Math.abs(p.getComponent(ax) - r.p.getComponent(ax)) > 1.7) continue;
-      const d2 = r.p.distanceToSquared(p) - (p.getComponent(ax) - r.p.getComponent(ax)) ** 2;
-      if (d2 < 2.9 * 2.9) {
-        r.taken = true;
-        r.mesh.material.opacity = 0.15;
-        return r;
+  // -------------------------------------------------------------- gameplay
+  tryRecruit(p, r = 8) {
+    for (let i = 0; i < this.recruits.length; i++) {
+      const rec = this.recruits[i];
+      if (rec.p.distanceToSquared(p) < r * r) {
+        this.recruits.splice(i, 1);
+        rec.chunk.recruits = rec.chunk.recruits.filter(x => x !== rec);
+        this.scene.remove(rec.rig.root);
+        rec.rig.root.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+        return { name: rec.name, color: rec.color, p: rec.p.clone() };
       }
     }
     return null;
@@ -518,9 +316,9 @@ export class City {
   tryWindow(p, prevP) {
     for (const w of this.windows) {
       if (w.taken) continue;
-      const inside = p.z > w.zMin && p.z < w.zMax && p.x > w.xMin && p.x < w.xMax && p.y > w.yMin - 0.3 && p.y < w.yMax;
-      const crossed = (prevP.z <= w.zMin && p.z > w.zMin) || inside;
-      if (crossed && p.x > w.xMin && p.x < w.xMax && p.y < w.yMax) {
+      const inX = p.x > w.xMin && p.x < w.xMax;
+      const crossed = (prevP.z <= w.zMin && p.z > w.zMin) || (prevP.z >= w.zMax && p.z < w.zMax);
+      if (crossed && inX && p.y < w.yMax) {
         w.taken = true;
         return w;
       }
@@ -528,8 +326,77 @@ export class City {
     return null;
   }
 
-  update(dt) {
-    for (const a of this.animated) a.mesh.rotation.z += a.spin * dt;
+  setDestination(pos, night) {
+    this.clearBeacon();
+    const M = this.mats(night);
+    const group = new THREE.Group();
+    const boxes = [];
+    const T = 9;   // half-size of the venue tower
+    const H = 42;
+    const geo = new THREE.BoxGeometry(T * 2, H, T * 2);
+    const tower = new THREE.Mesh(geo, M.gold);
+    tower.position.set(pos.x, H / 2, pos.z);
+    tower.castShadow = true;
+    tower.receiveShadow = true;
+    group.add(tower);
+    const line = new THREE.LineSegments(new THREE.EdgesGeometry(geo), M.edge);
+    line.position.copy(tower.position);
+    group.add(line);
+    boxes.push({
+      min: new THREE.Vector3(pos.x - T, 0, pos.z - T),
+      max: new THREE.Vector3(pos.x + T, H, pos.z + T),
+    });
+    // marquee steps at the base
+    const step = new THREE.Mesh(new THREE.BoxGeometry(T * 2 + 8, 2.2, T * 2 + 8), M.gold);
+    step.position.set(pos.x, 1.1, pos.z);
+    step.receiveShadow = true;
+    group.add(step);
+    boxes.push({
+      min: new THREE.Vector3(pos.x - T - 4, 0, pos.z - T - 4),
+      max: new THREE.Vector3(pos.x + T + 4, 2.2, pos.z + T + 4),
+    });
+    // the light you follow
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 2.2, 520, 16, 1, true), M.beam);
+    beam.position.set(pos.x, 260, pos.z);
+    group.add(beam);
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(T * 1.7, 0.5, 10, 48),
+      new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.85, fog: false }));
+    halo.rotation.x = Math.PI / 2;
+    halo.position.set(pos.x, H + 5, pos.z);
+    group.add(halo);
+    this.scene.add(group);
+    this.beacon = { pos: pos.clone(), group, boxes, halo, beam };
+  }
+
+  clearBeacon() {
+    if (!this.beacon) return;
+    this.beacon.group.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+    this.scene.remove(this.beacon.group);
+    this.beacon = null;
+  }
+
+  update(dt, t) {
+    for (const r of this.rotors) {
+      r.box.rot.yaw += r.box.rot.w * dt;
+      r.mesh.rotation.y = r.box.rot.yaw;
+    }
+    if (this.beacon) {
+      this.beacon.halo.rotation.z += dt * 0.4;
+      this.beacon.beam.material.opacity = 0.3 + Math.sin(t * 1.7) * 0.07;
+    }
+    // idle recruits skate lazy little circles
+    for (const rec of this.recruits) {
+      const a = t * 0.9 + rec.phase;
+      const px = rec.p.x + Math.cos(a) * 2.4;
+      const pz = rec.p.z + Math.sin(a) * 2.4;
+      rec.rig.root.position.set(px, rec.p.y, pz);
+      this._m.makeBasis(
+        new THREE.Vector3(Math.cos(a), 0, Math.sin(a)),
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)));
+      rec.rig.root.quaternion.setFromRotationMatrix(this._m);
+      rec.rig.animate(t + rec.phase, 7, 0.3);
+    }
   }
 }
 

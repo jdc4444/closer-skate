@@ -86,18 +86,18 @@ export function makeSkater({ outfit = 0xffd166, accent = 0xffffff, hair = 0x241a
 
   root.traverse(o => { if (o.isMesh) o.castShadow = true; });
 
-  function animate(t, speed, lean) {
-    const cadence = 2.2 + speed * 0.16;
+  function animate(t, speed, lean, crouch = 0) {
+    const cadence = 1.6 + speed * 0.16;
     const ph = t * cadence;
-    const amp = Math.min(0.62, 0.18 + speed * 0.02);
+    const amp = Math.min(0.6, 0.03 + speed * 0.026);
     legs[0].rotation.x = Math.sin(ph) * amp;
     legs[1].rotation.x = Math.sin(ph + Math.PI) * amp;
-    legs[0].rotation.z = 0.06 + Math.max(0, Math.sin(ph)) * 0.16;
-    legs[1].rotation.z = -0.06 - Math.max(0, Math.sin(ph + Math.PI)) * 0.16;
-    arms[0].rotation.x = Math.sin(ph + Math.PI) * amp * 0.5;
-    arms[1].rotation.x = Math.sin(ph) * amp * 0.5;
-    rig.position.y = Math.abs(Math.sin(ph)) * 0.045;
-    rig.rotation.x = 0.06 + speed * 0.004;       // forward lean with speed
+    legs[0].rotation.z = 0.06 + Math.max(0, Math.sin(ph)) * 0.16 + crouch * 0.12;
+    legs[1].rotation.z = -0.06 - Math.max(0, Math.sin(ph + Math.PI)) * 0.16 - crouch * 0.12;
+    arms[0].rotation.x = Math.sin(ph + Math.PI) * amp * 0.5 + crouch * 0.5;
+    arms[1].rotation.x = Math.sin(ph) * amp * 0.5 + crouch * 0.5;
+    rig.position.y = Math.abs(Math.sin(ph)) * 0.045 * Math.min(1, speed / 12) - crouch * 0.36;
+    rig.rotation.x = 0.05 + speed * 0.004 + crouch * 0.42;   // lean into the tuck
     rig.rotation.z = THREE.MathUtils.lerp(rig.rotation.z, -lean * 0.42, 0.15);
   }
 
