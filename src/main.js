@@ -44,7 +44,7 @@ const bloom = new UnrealBloomPass(
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
-const ambient = new THREE.AmbientLight(0x6a5070, 0.72);
+const ambient = new THREE.AmbientLight(0x6a5070, 0.88);
 scene.add(ambient);
 const dirLight = new THREE.DirectionalLight(0x9a86c8, 0.9);
 dirLight.castShadow = true;
@@ -783,7 +783,9 @@ function step(dtOverride) {
 
   nightF += (night - nightF) * Math.min(1, dt * 0.35);
   const atm = blendedAtmosphere(nightF);
-  scene.fog.color.copy(atm.horizon);
+  // sunset color stays in the sky dome; fog runs cooler so the ground
+  // fades to dusk-mauve instead of red
+  scene.fog.color.copy(atm.horizon).lerp(atm.skyTop, 0.48);
   ambient.color.copy(atm.ambient);
   dirLight.color.copy(atm.key);
   dirLight.position.copy(player.p).add(LIGHT_OFF);

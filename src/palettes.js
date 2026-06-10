@@ -7,7 +7,7 @@ export const ERAS = [
     skyTop: 0x2a1a5e, horizon: 0xff7e4f, skyBelow: 0x241636,
     building: 0xf2e0d0, glass: 0x9fb8c8, street: 0x232a32,
     trim: 0xff5fa2, neon2: 0x2ee6c8, sign: 0xffd166,
-    lamp: 0xffd9a0, sun: 0xffb36a, ambient: 0xc98a74, key: 0xe8a87a },
+    lamp: 0xffd9a0, sun: 0xffb36a, ambient: 0xa08a8c, key: 0xd8a488 },
   { name: 'NEON AVENUE · 1982',
     skyTop: 0x1c1248, horizon: 0xd84f9e, skyBelow: 0x1c1238,
     building: 0xead8e0, glass: 0x8aa8c0, street: 0x1f2630,

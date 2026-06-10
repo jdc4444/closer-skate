@@ -33,7 +33,7 @@ function makeWindowTexture(neonHex) {
       const lit = office ? Math.random() < 0.85 : Math.random() < 0.30;
       if (!lit) continue;
       const r = Math.random();
-      g.fillStyle = r < 0.6 ? '#ffd9a0' : r < 0.85 ? '#bfe2ff' : neonHex;
+      g.fillStyle = r < 0.45 ? '#ffe8c8' : r < 0.85 ? '#cfe6f8' : neonHex;
       g.globalAlpha = 0.45 + Math.random() * 0.55;
       g.fillRect(i * cw + 2.5, j * rh + 3, cw - 5, rh - 7);
     }
@@ -182,7 +182,7 @@ export class City {
           color: p.lamp, transparent: true, opacity: 0.13,
           blending: THREE.AdditiveBlending, depthWrite: false }),
         cone: new THREE.MeshBasicMaterial({
-          color: p.lamp, transparent: true, opacity: 0.045,
+          color: p.lamp, transparent: true, opacity: 0.028,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
         rotor: new THREE.MeshStandardMaterial({
           color: p.building, roughness: 0.4, metalness: 0.5,

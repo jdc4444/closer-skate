@@ -203,6 +203,12 @@ export function makeCharacter(opts = {}) {
       const ms = Array.isArray(o.material) ? o.material : [o.material];
       const cloned = ms.map(m => {
         const c = m.clone();
+        // Mixamo FBX materials often ship with transparency flags on — force opaque
+        c.transparent = false;
+        c.opacity = 1;
+        c.depthWrite = true;
+        c.alphaMap = null;
+        c.alphaTest = 0;
         if (!isPlayer && c.color) c.color.lerp(tint, 0.25);
         return c;
       });
