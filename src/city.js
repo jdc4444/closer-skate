@@ -20,24 +20,29 @@ const SIGN_WORDS = ['FLAMINGO', 'OCEAN', 'TROPICANA', 'PARADISE', 'STARLITE', 'E
 const CAR_COLORS = [0xf2b8c6, 0x7fd4c1, 0xf7e3b5, 0xc9b8f0, 0xff8a5c, 0xfaf2e0];
 
 function makeWindowTexture(neonHex) {
+  // emissive-only map. Windows are BINARY — brightly lit or fully dark —
+  // because dim half-lit cells read as mottled noise on shadowed facades.
+  // Soft edges keep the minified mips smooth instead of shimmering.
   const c = document.createElement('canvas');
-  c.width = 256; c.height = 256;
+  c.width = 512; c.height = 512;
   const g = c.getContext('2d');
-  g.fillStyle = '#06070c';
-  g.fillRect(0, 0, 256, 256);
+  g.fillStyle = '#000000';
+  g.fillRect(0, 0, 512, 512);
   const cols = 12, rows = 16;
-  const cw = 256 / cols, rh = 256 / rows;
+  const cw = 512 / cols, rh = 512 / rows;
+  g.filter = 'blur(1.2px)';
   for (let j = 0; j < rows; j++) {
-    const office = Math.random() < 0.10;     // a whole floor working late
+    const office = Math.random() < 0.08;     // a whole floor working late
     for (let i = 0; i < cols; i++) {
-      const lit = office ? Math.random() < 0.8 : Math.random() < 0.22;
+      const lit = office ? Math.random() < 0.65 : Math.random() < 0.15;
       if (!lit) continue;
       const r = Math.random();
       g.fillStyle = r < 0.45 ? '#ffe8c8' : r < 0.85 ? '#cfe6f8' : neonHex;
-      g.globalAlpha = 0.45 + Math.random() * 0.55;
-      g.fillRect(i * cw + 2.5, j * rh + 3, cw - 5, rh - 7);
+      g.globalAlpha = 0.8 + Math.random() * 0.2;
+      g.fillRect(i * cw + 5, j * rh + 6, cw - 10, rh - 14);
     }
   }
+  g.filter = 'none';
   g.globalAlpha = 1;
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;

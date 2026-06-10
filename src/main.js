@@ -151,21 +151,6 @@ const city = new City(scene, renderer.capabilities.getMaxAnisotropy());
 const sky = new Sky(scene);
 const audio = new DiscoAudio();
 
-// film grain tile
-(() => {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const g = c.getContext('2d');
-  const img = g.createImageData(128, 128);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = Math.random() * 255;
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  document.getElementById('grain').style.backgroundImage = `url(${c.toDataURL()})`;
-})();
-
 const el = {
   title: document.getElementById('title'),
   hud: document.getElementById('hud'),
