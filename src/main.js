@@ -99,26 +99,35 @@ function envFor(night) {
 scene.environment = envFor(0);
 
 // the wet street: a true mirror plane gliding under the city
-// The full-mirror street kept flooding the floor with reflected sunset reds
-// no matter how the palettes were tuned — and it rendered the scene twice.
-// Wet-asphalt now comes from a subtle gloss on the street material itself.
-const WET_MIRROR = false;
+// Wet street, take two: the old mirror flooded red because it reflected the
+// sunset sky dome. Now the dome and sun are hidden during the mirror's own
+// render pass — reflections show buildings and neon against darkness — and
+// an asphalt skin + low-res blur keep it a sheen instead of chrome.
+const WET_MIRROR = true;
 let mirror = null, asphaltSkin = null;
 if (WET_MIRROR) {
   mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
     clipBias: 0.003,
-    textureWidth: 1024,
-    textureHeight: 1024,
-    color: 0x2e3a44,
+    textureWidth: 512,
+    textureHeight: 512,
+    color: 0x55606a,
   });
   mirror.rotation.x = -Math.PI / 2;
   mirror.position.y = 0.02;
   scene.add(mirror);
+  const innerRender = mirror.onBeforeRender.bind(mirror);
+  mirror.onBeforeRender = (renderer, scn, cam, ...rest) => {
+    sky.dome.visible = false;
+    sky.sun.visible = false;
+    innerRender(renderer, scn, cam, ...rest);
+    sky.dome.visible = true;
+    sky.sun.visible = true;
+  };
   asphaltSkin = new THREE.Mesh(
     new THREE.PlaneGeometry(320, 320),
     new THREE.MeshStandardMaterial({
       color: 0x1a2026, roughness: 1, metalness: 0,
-      transparent: true, opacity: 0.48, depthWrite: false,
+      transparent: true, opacity: 0.55, depthWrite: false,
     }));
   asphaltSkin.rotation.x = -Math.PI / 2;
   asphaltSkin.position.y = 0.035;
@@ -672,6 +681,29 @@ const smoothF = new THREE.Vector3(0, 0, 1);
 const camPos = new THREE.Vector3(0, 5, -10);
 const camLook = new THREE.Vector3();
 let airBlend = 0;
+let camLen = 10;   // smoothed eye distance, shortened by walls
+
+// nearest entry of the segment (origin + dir*[0..len]) into an AABB
+function segBoxT(o, d, len, b) {
+  let t0 = 0, t1 = len;
+  for (let a = 0; a < 3; a++) {
+    const da = d.getComponent(a);
+    const oa = o.getComponent(a);
+    const mn = b.min.getComponent(a), mx = b.max.getComponent(a);
+    if (Math.abs(da) < 1e-8) {
+      if (oa < mn || oa > mx) return Infinity;
+      continue;
+    }
+    const inv = 1 / da;
+    let tA = (mn - oa) * inv;
+    let tB = (mx - oa) * inv;
+    if (tA > tB) { const tmp = tA; tA = tB; tB = tmp; }
+    if (tA > t0) t0 = tA;
+    if (tB < t1) t1 = tB;
+    if (t0 > t1) return Infinity;
+  }
+  return t0 > 0.01 ? t0 : Infinity;
+}
 
 function updateCamera(dt) {
   smoothUp.lerp(player.n, 1 - Math.exp(-7 * dt)).normalize();
@@ -692,9 +724,25 @@ function updateCamera(dt) {
   camPos.lerp(_t1, 1 - Math.exp(-12 * dt));
   camLook.lerp(_t2, 1 - Math.exp(-15 * dt));
 
+  // keep the camera out of the architecture: probe head -> desired eye
+  _t3.copy(player.p).addScaledVector(smoothUp, 1.6);
+  _t1.copy(camPos).sub(_t3);
+  const wantLen = Math.max(1.2, _t1.length());
+  _t1.normalize();
+  let safeLen = wantLen;
+  for (const b of city.activeBoxes(player.p)) {
+    if (b.rot) continue;
+    const t = segBoxT(_t3, _t1, wantLen, b);
+    if (t < safeLen) safeLen = t;
+  }
+  safeLen = Math.max(1.2, safeLen - 0.35);
+  camLen = safeLen < camLen
+    ? safeLen                                    // snap in so we never clip
+    : THREE.MathUtils.lerp(camLen, safeLen, Math.min(1, dt * 2.5));
+
   shake = Math.max(0, shake - dt * 1.4);
   _right.crossVectors(smoothUp, smoothF);
-  camera.position.copy(camPos)
+  camera.position.copy(_t3).addScaledVector(_t1, camLen)
     .addScaledVector(_right, (Math.random() - 0.5) * shake)
     .addScaledVector(smoothUp, (Math.random() - 0.5) * shake);
   camera.up.copy(smoothUp);
