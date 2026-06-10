@@ -314,6 +314,7 @@ document.addEventListener('visibilitychange', () => {
 const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3(), _t3 = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _mtx = new THREE.Matrix4();
+const _quat = new THREE.Quaternion();
 
 function signedAngle(a, b, up) {
   _t3.crossVectors(a, b);
@@ -430,6 +431,33 @@ function updatePlayer(dt) {
     }
     if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
     if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
+
+    // gravity sculpting: in the air, ↑/↓ pitch your personal "down" —
+    // tilt forward into a facade and land on it feet-first; tilt all the
+    // way over and fall up onto an underside. Release to settle onto the
+    // nearest plane.
+    const pitchIn = playing
+      ? ((keys.has('arrowup') || keys.has('w')) ? 1 : 0) - ((keys.has('arrowdown') || keys.has('s')) ? 1 : 0)
+      : 0;
+    if (pitchIn !== 0) {
+      // pitch around the body's own right axis — facing stays the reference
+      _right.crossVectors(player.f, player.gravN);
+      if (_right.lengthSq() > 1e-6) {
+        _right.normalize();
+        _quat.setFromAxisAngle(_right, pitchIn * 1.7 * dt);
+        player.gravN.applyQuaternion(_quat).normalize();
+        player.f.applyQuaternion(_quat);
+      }
+    } else if (playing) {
+      const a = SURF.axisOf(player.gravN);
+      const sgn = SURF.comp(player.gravN, a) >= 0 ? 1 : -1;
+      _t2.set(0, 0, 0).setComponent(a, sgn);
+      player.gravN.lerp(_t2, Math.min(1, dt * 6)).normalize();
+    }
+    player.n.copy(player.gravN);
+    player.f.addScaledVector(player.n, -player.f.dot(player.n));
+    if (player.f.lengthSq() < 1e-4) player.f.set(0, 0, 1);
+    player.f.normalize();
     player.p.addScaledVector(player.vel, dt);
     const land = SURF.sweepLand(boxes, player.prevP, player.p, player.gravN);
     if (land && player.vel.dot(player.gravN) <= 0) {
@@ -620,6 +648,7 @@ const smoothUp = new THREE.Vector3(0, 1, 0);
 const smoothF = new THREE.Vector3(0, 0, 1);
 const camPos = new THREE.Vector3(0, 5, -10);
 const camLook = new THREE.Vector3();
+let airBlend = 0;
 
 function updateCamera(dt) {
   smoothUp.lerp(player.n, 1 - Math.exp(-7 * dt)).normalize();
@@ -628,10 +657,15 @@ function updateCamera(dt) {
   if (smoothF.lengthSq() < 1e-4) smoothF.copy(player.f);
   smoothF.normalize();
 
+  // in the air the framing recenters on the skater and tips toward the drop
+  airBlend += ((player.grounded ? 0 : 1) - airBlend) * Math.min(1, dt * 4.5);
   const packPull = Math.min(7, members.length * 0.55);
-  const h = 4.1 - player.tuck * 1.2 + packPull * 0.22;
-  _t1.copy(player.p).addScaledVector(smoothUp, h).addScaledVector(smoothF, -(8.8 + packPull));
-  _t2.copy(player.p).addScaledVector(smoothUp, 1.9).addScaledVector(smoothF, 10.5);
+  const h = THREE.MathUtils.lerp(4.1 - player.tuck * 1.2 + packPull * 0.22, 6.0, airBlend);
+  const back = THREE.MathUtils.lerp(8.8 + packPull, 7.6, airBlend);
+  const lookAhead = THREE.MathUtils.lerp(10.5, 2.6, airBlend);
+  const lookUp = THREE.MathUtils.lerp(1.9, -1.8, airBlend);
+  _t1.copy(player.p).addScaledVector(smoothUp, h).addScaledVector(smoothF, -back);
+  _t2.copy(player.p).addScaledVector(smoothUp, lookUp).addScaledVector(smoothF, lookAhead);
   camPos.lerp(_t1, 1 - Math.exp(-12 * dt));
   camLook.lerp(_t2, 1 - Math.exp(-15 * dt));
 
@@ -702,7 +736,9 @@ window.__test = {
     }
     return best ? { x: best.p.x, y: best.p.y, z: best.p.z, name: best.name } : null;
   },
-  f: () => ({ x: +player.f.x.toFixed(2), z: +player.f.z.toFixed(2) }),
+  f: () => ({ x: +player.f.x.toFixed(2), y: +player.f.y.toFixed(2), z: +player.f.z.toFixed(2) }),
+  keysDbg: () => [...keys],
+  gravN: () => ({ x: +player.gravN.x.toFixed(2), y: +player.gravN.y.toFixed(2), z: +player.gravN.z.toFixed(2) }),
   members: () => members.slice(0, 4).map(m => ({
     x: +m.p.x.toFixed(1), y: +m.p.y.toFixed(1), z: +m.p.z.toFixed(1),
     dp: +m.p.distanceTo(player.p).toFixed(1),
