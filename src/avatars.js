@@ -64,9 +64,9 @@ const _qz = new THREE.Quaternion();
 const X = new THREE.Vector3(1, 0, 0);
 const Z = new THREE.Vector3(0, 0, 1);
 
-function quatKeys(bone, times, angles, axis = X, zAngles = null) {
+function quatKeys(bone, times, angles, axis = X, zAngles = null, base = null) {
   // compose each key from the bone's REST orientation — rig-safe
-  const rest = bone.quaternion.clone();
+  const rest = (base ?? bone.quaternion).clone();
   const values = [];
   const q = new THREE.Quaternion();
   for (let i = 0; i < times.length; i++) {
@@ -81,8 +81,28 @@ function quatKeys(bone, times, angles, axis = X, zAngles = null) {
   return new THREE.QuaternionKeyframeTrack(`${bone.name}.quaternion`, times, values);
 }
 
+// measure where each arm actually points at rest, and compute the local
+// rotation that hangs it at the body's side — no guessed offsets, any rig
+function armBases(bones, model) {
+  model.updateMatrixWorld(true);
+  const out = {};
+  for (const side of ['left', 'right']) {
+    const arm = bones[side + 'arm'], fore = bones[side + 'forearm'];
+    if (!arm || !fore) continue;
+    const aw = arm.getWorldPosition(new THREE.Vector3());
+    const fw = fore.getWorldPosition(new THREE.Vector3());
+    const cur = fw.sub(aw).normalize();
+    const desired = new THREE.Vector3(side === 'left' ? 0.24 : -0.24, -0.95, 0.10).normalize();
+    const R = new THREE.Quaternion().setFromUnitVectors(cur, desired);
+    const wq = arm.getWorldQuaternion(new THREE.Quaternion());
+    const localDelta = wq.clone().invert().multiply(R).multiply(wq);
+    out[side] = arm.quaternion.clone().multiply(localDelta);
+  }
+  return out;
+}
+
 // the skate stride: low stance, legs scissoring, arms countering
-function buildSkateClip(bones) {
+function buildSkateClip(bones, bases = {}) {
   const T = [0, 0.25, 0.5, 0.75, 1.0];
   const tracks = [];
   const SW = 0.55;
@@ -109,15 +129,13 @@ function buildSkateClip(bones) {
     tracks.push(quatKeys(bones.rightfoot, T, wave(0.5, 0.12, -0.30)));
   }
   if (bones.leftarm && bones.rightarm) {
-    // arms down from the T-pose, swinging with the stride
-    tracks.push(quatKeys(bones.leftarm, T, wave(0.5, SW * 0.45), X,
-      T.map(() => 1.05)));
-    tracks.push(quatKeys(bones.rightarm, T, wave(0, SW * 0.45), X,
-      T.map(() => -1.05)));
+    // arms hang from their measured rest, swinging with the stride
+    tracks.push(quatKeys(bones.leftarm, T, wave(0.5, SW * 0.4), X, null, bases.left));
+    tracks.push(quatKeys(bones.rightarm, T, wave(0, SW * 0.4), X, null, bases.right));
   }
   if (bones.leftforearm && bones.rightforearm) {
-    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.45)));
-    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.45)));
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.3)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.3)));
   }
   if (bones.spine) tracks.push(quatKeys(bones.spine, T, wave(0.25, 0.05, 0.22)));
   if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.10)));
@@ -134,7 +152,7 @@ function buildSkateClip(bones) {
 }
 
 // at rest: easy knees, arms at the sides, breathing, a slow weight shift
-function buildIdleClip(bones) {
+function buildIdleClip(bones, bases = {}) {
   const T = [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
   const tracks = [];
   const sway = (phase, amp, offset = 0) =>
@@ -153,12 +171,12 @@ function buildIdleClip(bones) {
     tracks.push(quatKeys(bones.rightfoot, T, T.map(() => -0.12)));
   }
   if (bones.leftarm && bones.rightarm) {
-    tracks.push(quatKeys(bones.leftarm, T, sway(0, 0.03, 0.02), X, T.map(() => 1.12)));
-    tracks.push(quatKeys(bones.rightarm, T, sway(Math.PI, 0.03, 0.02), X, T.map(() => -1.12)));
+    tracks.push(quatKeys(bones.leftarm, T, sway(0, 0.03, 0.02), X, null, bases.left));
+    tracks.push(quatKeys(bones.rightarm, T, sway(Math.PI, 0.03, 0.02), X, null, bases.right));
   }
   if (bones.leftforearm && bones.rightforearm) {
-    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.25)));
-    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.25)));
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.18)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.18)));
   }
   if (bones.spine) tracks.push(quatKeys(bones.spine, T, sway(0, 0.025, 0.05)));
   if (bones.hips) {
@@ -250,10 +268,11 @@ export function makeCharacter(opts = {}) {
   }
 
   const mixer = new THREE.AnimationMixer(model);
-  const skate = mixer.clipAction(buildSkateClip(bones));
+  const bases = armBases(bones, model);
+  const skate = mixer.clipAction(buildSkateClip(bones, bases));
   // if the FBX shipped with a baked Mixamo clip, that's the idle
   const native = (src.scene.animations ?? []).find(c => c.duration > 0.5);
-  const idleClip = native ?? buildIdleClip(bones);
+  const idleClip = native ?? buildIdleClip(bones, bases);
   const idle = mixer.clipAction(idleClip);
   skate.play();
   idle.play();
