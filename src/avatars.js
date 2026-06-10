@@ -1,70 +1,151 @@
-// avatars.js — real rigged characters (Mixamo-rigged GLBs vendored from the
-// three.js examples: Soldier, Xbot, Michelle), skinned + animated, with
-// glowing skates bolted to their foot bones. Falls back to the procedural
-// rigs if the models fail to load.
+// avatars.js — real skinned humans, animated safely.
+// Michelle (a Mixamo-rigged dancer from the three.js examples) is every
+// skater: the player plain, the troupe as tinted variants with skirts and
+// size variation. Movement clips are AUTHORED at runtime against each
+// skeleton's own rest pose (no cross-rig retargeting — that's what made
+// limbs explode), so the skate stride is an actual skate stride: low
+// stance, scissoring legs, swinging arms. Her one native clip, SambaDance,
+// plays whenever she stops. Falls back to procedural rigs if loading fails.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { makeSkater } from './skaters.js';
 
-const FILES = {
-  michelle: '/models/Michelle.glb',
-  soldier: '/models/Soldier.glb',
-  xbot: '/models/Xbot.glb',
-};
-// which way the raw model faces; corrected so +Z is forward
-const FACING = { michelle: 0, soldier: Math.PI, xbot: 0 };
-
-export const lib = { ready: false, sources: {}, info: {} };
+export const lib = { ready: false, source: null, info: {} };
 
 export async function initAvatars() {
   const loader = new GLTFLoader();
-  await Promise.all(Object.entries(FILES).map(async ([key, url]) => {
-    try {
-      const gltf = await loader.loadAsync(url);
-      const box = new THREE.Box3().setFromObject(gltf.scene);
-      const h = Math.max(0.01, box.max.y - box.min.y);
-      const clips = gltf.animations ?? [];
-      lib.sources[key] = { scene: gltf.scene, clips, height: h };
-      lib.info[key] = { height: +h.toFixed(2), clips: clips.map(a => a.name) };
-    } catch (e) {
-      lib.info[key] = { error: String(e).slice(0, 120) };
-    }
-  }));
-  lib.kinds = Object.keys(lib.sources);
-  // shared clip pool — Mixamo rigs share bone names, so clips retarget freely
-  lib.allClips = lib.kinds.flatMap(k => lib.sources[k].clips);
-  lib.ready = lib.kinds.some(k => lib.sources[k].clips.some(c => /run|walk/i.test(c.name)));
+  try {
+    const gltf = await loader.loadAsync('/models/Michelle.glb');
+    const box = new THREE.Box3().setFromObject(gltf.scene);
+    lib.source = {
+      scene: gltf.scene,
+      clips: gltf.animations ?? [],
+      height: Math.max(0.01, box.max.y - box.min.y),
+    };
+    lib.info.michelle = {
+      height: +lib.source.height.toFixed(2),
+      clips: lib.source.clips.map(a => a.name),
+    };
+    lib.ready = true;
+  } catch (e) {
+    lib.info.michelle = { error: String(e).slice(0, 120) };
+    lib.ready = false;
+  }
   return lib.info;
 }
 
-function findClip(clips, ...patterns) {
-  for (const p of patterns) {
-    const c = clips.find(c => p.test(c.name));
-    if (c) return c;
-  }
-  return null;
+// ---------------------------------------------------------------- bones
+const BONE_KEYS = [
+  'hips', 'spine', 'spine1', 'spine2', 'neck', 'head',
+  'leftupleg', 'leftleg', 'leftfoot', 'rightupleg', 'rightleg', 'rightfoot',
+  'leftarm', 'leftforearm', 'rightarm', 'rightforearm',
+  'leftshoulder', 'rightshoulder',
+];
+
+function mapBones(model) {
+  const bones = {};
+  model.traverse(o => {
+    if (!o.isBone) return;
+    const n = o.name.toLowerCase().replace(/^mixamorig:?/, '').replace(/[_\s]/g, '');
+    if (BONE_KEYS.includes(n) && !bones[n]) bones[n] = o;
+  });
+  return bones;
 }
 
-let pickCounter = 0;
+// ---------------------------------------------------------------- clips
+const _qx = new THREE.Quaternion();
+const _qz = new THREE.Quaternion();
+const X = new THREE.Vector3(1, 0, 0);
+const Z = new THREE.Vector3(0, 0, 1);
 
-// Same interface as the procedural makeSkater: { root, animate(t, speed, lean, crouch) }
+function quatKeys(bone, times, angles, axis = X, zAngles = null) {
+  // compose each key from the bone's REST orientation — rig-safe
+  const rest = bone.quaternion.clone();
+  const values = [];
+  const q = new THREE.Quaternion();
+  for (let i = 0; i < times.length; i++) {
+    _qx.setFromAxisAngle(axis, angles[i]);
+    q.copy(rest).multiply(_qx);
+    if (zAngles) {
+      _qz.setFromAxisAngle(Z, zAngles[i]);
+      q.multiply(_qz);
+    }
+    values.push(q.x, q.y, q.z, q.w);
+  }
+  return new THREE.QuaternionKeyframeTrack(`${bone.name}.quaternion`, times, values);
+}
+
+// the skate stride: low stance, legs scissoring, arms countering
+function buildSkateClip(bones) {
+  const T = [0, 0.25, 0.5, 0.75, 1.0];
+  const tracks = [];
+  const SW = 0.55;        // stride swing
+  const STANCE = -0.38;   // thighs forward = sitting into the skate
+  const KNEE = 0.62;      // standing knee bend
+
+  const wave = (phase, amp, offset = 0) =>
+    T.map(t => offset + amp * Math.sin(2 * Math.PI * (t + phase)));
+
+  if (bones.leftupleg && bones.rightupleg) {
+    tracks.push(quatKeys(bones.leftupleg, T, wave(0, SW, STANCE), X,
+      wave(0.25, 0.10, 0.06)));
+    tracks.push(quatKeys(bones.rightupleg, T, wave(0.5, SW, STANCE), X,
+      wave(0.75, 0.10, -0.06)));
+  }
+  if (bones.leftleg && bones.rightleg) {
+    // knees: bent in stance, extending on the push
+    tracks.push(quatKeys(bones.leftleg, T,
+      T.map(t => KNEE + 0.35 * Math.max(0, Math.sin(2 * Math.PI * t)))));
+    tracks.push(quatKeys(bones.rightleg, T,
+      T.map(t => KNEE + 0.35 * Math.max(0, Math.sin(2 * Math.PI * (t + 0.5))))));
+  }
+  if (bones.leftfoot && bones.rightfoot) {
+    tracks.push(quatKeys(bones.leftfoot, T, wave(0, 0.12, -0.30)));
+    tracks.push(quatKeys(bones.rightfoot, T, wave(0.5, 0.12, -0.30)));
+  }
+  if (bones.leftarm && bones.rightarm) {
+    // bring the arms down from the T-pose, then swing them with the stride
+    tracks.push(quatKeys(bones.leftarm, T, wave(0.5, SW * 0.45), X,
+      T.map(() => 1.05)));
+    tracks.push(quatKeys(bones.rightarm, T, wave(0, SW * 0.45), X,
+      T.map(() => -1.05)));
+  }
+  if (bones.leftforearm && bones.rightforearm) {
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.45)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.45)));
+  }
+  if (bones.spine) tracks.push(quatKeys(bones.spine, T, wave(0.25, 0.05, 0.22)));
+  if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.10)));
+  if (bones.hips) {
+    const p0 = bones.hips.position;
+    const py = T.map(t => p0.y * (0.965 + 0.02 * Math.sin(4 * Math.PI * t)));
+    const px = T.map(t => p0.x + p0.y * 0.02 * Math.sin(2 * Math.PI * t));
+    const vals = [];
+    for (let i = 0; i < T.length; i++) vals.push(px[i], py[i], p0.z);
+    tracks.push(new THREE.VectorKeyframeTrack(`${bones.hips.name}.position`, T, vals));
+    tracks.push(quatKeys(bones.hips, T, wave(0.25, 0.05, 0.06)));
+  }
+  return new THREE.AnimationClip('SkateCycle', 1.0, tracks);
+}
+
+// ---------------------------------------------------------------- factory
+const SKIRT_COLORS = null; // skirt takes the outfit tint
+
 export function makeCharacter(opts = {}) {
   if (!lib.ready) return makeSkater(opts);
-  const kind = opts.kind && lib.sources[opts.kind]
-    ? opts.kind
-    : lib.kinds[pickCounter++ % lib.kinds.length];
-  const src = lib.sources[kind];
+  const src = lib.source;
 
   const root = new THREE.Group();
   const lean = new THREE.Group();
   root.add(lean);
   const model = SkeletonUtils.clone(src.scene);
-  const s = 1.75 / src.height;
+  const jitter = opts.kind === 'michelle' ? 1 : 0.95 + Math.random() * 0.08;
+  const s = (1.72 / src.height) * jitter;
   model.scale.setScalar(s);
-  model.rotation.y = FACING[kind] ?? 0;
   lean.add(model);
 
+  const isPlayer = opts.kind === 'michelle';
   const accent = opts.accent ?? opts.outfit ?? 0x35e0c8;
   const tint = new THREE.Color(opts.outfit ?? 0xffffff);
   const glowMat = new THREE.MeshStandardMaterial({
@@ -72,37 +153,24 @@ export function makeCharacter(opts = {}) {
   });
   const darkMat = new THREE.MeshStandardMaterial({ color: 0x14141c, roughness: 0.4, metalness: 0.3 });
 
-  let spine = null, head = null;
-  const feet = [];
   model.traverse(o => {
     if (o.isMesh || o.isSkinnedMesh) {
       o.castShadow = true;
       o.frustumCulled = false;
       if (o.material) {
         o.material = o.material.clone();
-        if (o.material.color && opts.outfit !== undefined && kind !== 'michelle') {
-          o.material.color.lerp(tint, 0.35);
-        }
-        if (kind === 'xbot' && o.material.color) {
-          // the robot takes the troupe color on its shell
-          o.material.color.lerp(tint, 0.55);
-          o.material.metalness = 0.7;
-          o.material.roughness = 0.35;
-        }
+        if (!isPlayer && o.material.color) o.material.color.lerp(tint, 0.30);
       }
-    }
-    if (o.isBone) {
-      const n = o.name.toLowerCase();
-      if (!spine && /spine1|spine_01|spine$/.test(n)) spine = o;
-      if (!head && /head$/.test(n)) head = o;
-      if (/leftfoot$|left_foot|foot_l/.test(n)) feet.push(o);
-      if (/rightfoot$|right_foot|foot_r/.test(n)) feet.push(o);
     }
   });
 
-  // glowing rollerskates on the foot bones (sized in raw bone units)
+  const bones = mapBones(model);
   const u = 1 / s;
-  for (const foot of feet) {
+
+  // glowing rollerskates on the foot bones
+  for (const key of ['leftfoot', 'rightfoot']) {
+    const foot = bones[key];
+    if (!foot) continue;
     const g = new THREE.Group();
     const chassis = new THREE.Mesh(new THREE.BoxGeometry(0.07 * u, 0.05 * u, 0.26 * u), darkMat);
     chassis.position.set(0, -0.075 * u, 0.07 * u);
@@ -115,51 +183,48 @@ export function makeCharacter(opts = {}) {
     }
     foot.add(g);
   }
-  // a small glowing marker above the head — your troupe, your colors
-  if (head && opts.marker !== false) {
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.20 * u, 0.035 * u, 0.14 * u), glowMat);
-    band.position.y = 0.14 * u;
-    head.add(band);
+
+  // the skirts you loved — on most of the troupe, riding the hip bone
+  if (!isPlayer && bones.hips && (opts.dress ?? Math.random() < 0.65)) {
+    const skirt = new THREE.Mesh(
+      new THREE.ConeGeometry(0.30 * u, 0.40 * u, 14, 1, true),
+      new THREE.MeshStandardMaterial({
+        color: tint.clone().lerp(new THREE.Color(0xffffff), 0.15),
+        roughness: 0.7, side: THREE.DoubleSide,
+      }));
+    skirt.position.y = -0.12 * u;
+    skirt.castShadow = true;
+    bones.hips.add(skirt);
   }
 
   const mixer = new THREE.AnimationMixer(model);
-  // borrowed clips get trimmed to the bones this skeleton actually has
-  const boneNames = new Set();
-  model.traverse(o => boneNames.add(o.name));
-  const fit = (clip) => {
-    if (!clip) return null;
-    const tracks = clip.tracks.filter(t => boneNames.has(t.name.split('.')[0]));
-    return tracks.length === clip.tracks.length
-      ? clip
-      : new THREE.AnimationClip(clip.name, clip.duration, tracks);
-  };
-  const runClip = fit(findClip(src.clips, /run/i, /walk/i) ?? findClip(lib.allClips, /run/i, /walk/i));
-  // Michelle's only clip is SambaDance — so she dances whenever she idles
-  const idleClip = fit(findClip(src.clips, /idle/i, /dance/i, /pose/i)) ?? runClip;
-  const run = mixer.clipAction(runClip);
-  const idle = mixer.clipAction(idleClip);
-  run.play();
-  idle.play();
-  run.setEffectiveWeight(0);
-  idle.setEffectiveWeight(1);
+  const skate = mixer.clipAction(buildSkateClip(bones));
+  const idleClip = src.clips.find(c => /dance|idle/i.test(c.name)) ?? null;
+  const idle = idleClip ? mixer.clipAction(idleClip) : null;
+  skate.play();
+  skate.setEffectiveWeight(0);
+  if (idle) {
+    idle.play();
+    idle.setEffectiveWeight(1);
+    idle.time = Math.random() * (idleClip.duration || 1);
+  }
 
   let lastT = null;
   function animate(t, speed, leanIn = 0, crouch = 0) {
     const dt = lastT === null ? 0.016 : Math.max(0, Math.min(0.1, t - lastT));
     lastT = t;
-    const sp01 = THREE.MathUtils.clamp(speed / 9, 0, 1);
-    run.setEffectiveWeight(sp01);
-    idle.setEffectiveWeight(1 - sp01);
-    run.timeScale = THREE.MathUtils.clamp(0.45 + speed / 16, 0.45, 1.7);
+    const sp01 = THREE.MathUtils.clamp(speed / 7, 0, 1);
+    skate.setEffectiveWeight(sp01);
+    if (idle) idle.setEffectiveWeight(1 - sp01);
+    skate.timeScale = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.8);
     mixer.update(dt);
-    // post-mix body language: forward lean with speed, tuck, carve roll
-    if (spine) {
-      spine.rotation.x += 0.1 + sp01 * 0.22 + crouch * 0.55;
-    }
+    // post-mix body language: tuck and carve
+    if (bones.spine1) bones.spine1.rotation.x += crouch * 0.55;
+    if (bones.spine) bones.spine.rotation.x += crouch * 0.25;
     lean.rotation.z = THREE.MathUtils.lerp(lean.rotation.z, -leanIn * 0.38, 0.15);
-    lean.rotation.x = sp01 * 0.10 + crouch * 0.18;
-    lean.position.y = -crouch * 0.28;
+    lean.rotation.x = sp01 * 0.08 + crouch * 0.16;
+    lean.position.y = -crouch * 0.26;
   }
 
-  return { root, animate, kind };
+  return { root, animate, kind: 'michelle' };
 }
