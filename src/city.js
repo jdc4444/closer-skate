@@ -114,6 +114,7 @@ export class City {
     this.recruits = [];
     this.windows = [];
     this.cars = [];
+    this.lamps = [];
     this.billboards = [];
     this.blinkers = [];
     this.night = 0;
@@ -242,6 +243,15 @@ export class City {
     chunk.boxes.push({ min: min.clone(), max: max.clone() });
   }
 
+  // thin vertical obstacles: solid, never climbable, graze-able
+  slimCollider(chunk, x, z, r, h) {
+    chunk.boxes.push({
+      min: new THREE.Vector3(x - r, 0, z - r),
+      max: new THREE.Vector3(x + r, h, z + r),
+      slim: true,
+    });
+  }
+
   // a tier of a tower: pastel stucco (or rare glass) with windows, neon
   // edge outline, deco racing stripes, collider
   tierBox(chunk, M, x, z, w, d, y0, h, rng, stucco) {
@@ -286,6 +296,7 @@ export class City {
     trunk.rotation.z = lean;
     trunk.castShadow = true;
     g.add(trunk);
+    this.slimCollider(chunk, x, z, 0.24, h * 0.9);
     const topX = Math.sin(lean) * -h * 0.95;
     for (let i = 0; i < 7; i++) {
       const frond = new THREE.Mesh(new THREE.ConeGeometry(0.5, 3.4, 4, 1), M.frond);
@@ -445,6 +456,10 @@ export class City {
     g.position.set(x, 0, z);
     if (faceX !== undefined) g.rotation.y = faceX;
     chunk.group.add(g);
+    this.slimCollider(chunk, x, z, 0.18, 7.2);
+    const lamp = { g, x, z, shakeT: 0, chunk };
+    chunk.lamps.push(lamp);
+    this.lamps.push(lamp);
   }
 
   vending(chunk, M, x, z, rot) {
@@ -550,7 +565,7 @@ export class City {
     const M = this.mats(this.night);
     const chunk = {
       group: new THREE.Group(), boxes: [], cx, cz,
-      rotors: [], recruits: [], windows: [], cars: [], billboards: [], blinkers: [],
+      rotors: [], recruits: [], windows: [], cars: [], billboards: [], blinkers: [], lamps: [],
       terraces: [], skySpots: [],
     };
     const rng = mulberry32(((cx * 73856093) ^ (cz * 19349663)) >>> 0);
@@ -576,6 +591,8 @@ export class City {
         const g = new THREE.BoxGeometry(w, 0.14, d);
         g.translate(x + w / 2, 0.07, z + d / 2);
         sw.push(g);
+        this.collider(chunk,
+          new THREE.Vector3(x, 0, z), new THREE.Vector3(x + w, 0.14, z + d));
       };
       plate(x0 + b0, z0 + b0, CHUNK - b0 - 1, 3.6);
       plate(x0 + b0, z0 + CHUNK - 1, CHUNK - b0 - 1, 1);
@@ -850,6 +867,7 @@ export class City {
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 5.4, 8), M.metal);
       pole.position.set(tx, 2.7, tz);
       chunk.group.add(pole);
+      this.slimCollider(chunk, tx, tz, 0.16, 5.2);
       const headBox = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.9, 0.3), M.metal);
       headBox.position.set(tx, 5.0, tz);
       chunk.group.add(headBox);
@@ -919,6 +937,7 @@ export class City {
     this.rotors = this.rotors.filter(r => !ch.rotors.includes(r));
     this.windows = this.windows.filter(w => !ch.windows.includes(w));
     this.cars = this.cars.filter(c => c.chunk !== ch);
+    this.lamps = this.lamps.filter(l => l.chunk !== ch);
     this.billboards = this.billboards.filter(b => b.chunk !== ch);
     this.blinkers = this.blinkers.filter(b => b.chunk !== ch);
     for (const rec of ch.recruits) {
@@ -976,6 +995,14 @@ export class City {
   }
 
   tryWindow() { return null; }   // arch bonuses retired in the open city
+
+  // a graze sets nearby lamp posts swinging
+  shakeNear(p, r = 1.6) {
+    for (const l of this.lamps) {
+      const dx = l.x - p.x, dz = l.z - p.z;
+      if (dx * dx + dz * dz < r * r) l.shakeT = Math.max(l.shakeT, 0.9);
+    }
+  }
 
   carHit(p) {
     for (const c of this.cars) {

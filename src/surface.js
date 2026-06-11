@@ -25,9 +25,13 @@ export function support(boxes, p, n, maxDrop = 0.9, grow = 0.06) {
   let best = null;
   for (const b of boxes) {
     if (b.rot && a !== 1) continue;
+    if (b.slim) continue;                       // poles are never floors
     const q = s > 0 ? comp(b.max, a) : comp(b.min, a);
     const h = (comp(p, a) - q) * s;
-    if (h < -0.08 || h > maxDrop) continue;
+    // static faces slightly above the feet still support — that's how
+    // curbs and low sidewalk plates get stepped onto instead of clipped
+    const rise = b.rot ? -0.08 : -0.26;
+    if (h < rise || h > maxDrop) continue;
     let inside = true;
     if (b.rot) {
       const cy = Math.cos(b.rot.yaw), sy = Math.sin(b.rot.yaw);
@@ -154,8 +158,43 @@ export function wrap(state, k, sk, bound) {
   state.n.copy(_d);
 }
 
+// Keep the body out of every box: the torso occupies a band along `up`
+// (feet+0.1 .. feet+1.6) with radius r in the tangent plane. Any box that
+// penetrates that band pushes the point out along the smallest tangential
+// overlap. Makes "inside geometry" unrepresentable. Returns the last hit.
+function pushOut1D(x, lo, hi) {
+  if (x <= lo || x >= hi) return 0;
+  const dl = lo - x, dh = hi - x;
+  return -dl <= dh ? dl : dh;
+}
+export function resolveBody(boxes, p, up, r = 0.32) {
+  const a = axisOf(up);
+  const s = comp(up, a) >= 0 ? 1 : -1;
+  const t1 = (a + 1) % 3, t2 = (a + 2) % 3;
+  // the band starts at knee height: curbs and low plates are stepped over
+  // (support() handles those), not shoved against
+  const mid = comp(p, a) + s * 1.05;
+  let hit = null;
+  for (const b of boxes) {
+    if (b.rot) continue;
+    if (comp(b.max, a) < mid - 0.55 || comp(b.min, a) > mid + 0.55) continue;
+    const d1 = pushOut1D(comp(p, t1), comp(b.min, t1) - r, comp(b.max, t1) + r);
+    if (d1 === 0) continue;
+    const d2 = pushOut1D(comp(p, t2), comp(b.min, t2) - r, comp(b.max, t2) + r);
+    if (d2 === 0) continue;
+    if (Math.abs(d1) <= Math.abs(d2)) {
+      p.setComponent(t1, comp(p, t1) + d1);
+      hit = { box: b, axis: t1, sign: Math.sign(d1), depth: Math.abs(d1) };
+    } else {
+      p.setComponent(t2, comp(p, t2) + d2);
+      hit = { box: b, axis: t2, sign: Math.sign(d2), depth: Math.abs(d2) };
+    }
+  }
+  return hit;
+}
+
 // One grounded step. Mutates state {p, n, f, box}; reports what happened in
-// ev {climbed, wrapped, stumbled, lost}.
+// ev {climbed, wrapped, stumbled, lost, hitSlim}.
 export function stepGrounded(boxes, state, dist, ev) {
   const a = axisOf(state.n);
   const move = _stepMove.copy(state.f).multiplyScalar(dist);
@@ -170,13 +209,14 @@ export function stepGrounded(boxes, state, dist, ev) {
     const sk = mk > 0 ? 1 : -1;
     const w = wallAhead(boxes, state.p, state.n, k, sk, Math.abs(mk) + 0.55);
     if (w && w.gap <= Math.abs(mk) + 0.5) {
-      if (w.extent >= 2.2) {
+      if (w.extent >= 2.2 && !w.box.slim) {
         climb(state, k, sk, w.q, w.box);
         ev.climbed = w;
         return;
       }
       ev.stumbled = true;
-      continue;                 // blocked by a curb/planter: drop this axis
+      if (w.box.slim) ev.hitSlim = w.box;
+      continue;                 // blocked by a pole/curb/planter: drop this axis
     }
     state.p.setComponent(k, comp(state.p, k) + mk);
   }

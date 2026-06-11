@@ -429,6 +429,18 @@ export function makeCharacter(opts = {}) {
           root, animate: animateM, kind: 'hero-motion',
           corner: (asym = 0, oldN = null, edgeW = null) => motion.startCorner(asym, oldN, edgeW),
           land: (amt = 0.5) => motion.land(amt),
+          graze: (side) => motion.graze(side),
+          // arm probe points for graze checks: elbow and hand, each side
+          armPoints: () => {
+            const out = [];
+            for (const sd of ['left', 'right']) {
+              const fa = bones[sd + 'forearm'];
+              const h = motion.hands[sd];
+              if (fa) out.push({ side: sd, p: fa.getWorldPosition(new THREE.Vector3()) });
+              if (h) out.push({ side: sd, p: h.getWorldPosition(new THREE.Vector3()) });
+            }
+            return out;
+          },
           armDir: () => {
             bones.leftarm.getWorldPosition(_wa2);
             bones.leftforearm.getWorldPosition(_wf2);

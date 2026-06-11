@@ -130,6 +130,7 @@ export class SkaterMotion {
     this.corner = { t: 9, asym: 0, hopped: false, oldN: new THREE.Vector3(0, 1, 0), lead: 1 };
     // turning at a standstill: feet hold their world heading and step around
     this.pivot = { yawL: 0, yawR: 0, step: 0, s: 0, shift: 0 };
+    this.grazeT = { left: 0, right: 0 };   // arm-hit reactions, per side
     this.wmP = 0;              // windmill phase (stumble arms)
     this.elapsed = 0;
     // smoothed targets: feet (root-local), arm dirs (root-local)
@@ -156,6 +157,8 @@ export class SkaterMotion {
     this.load.v += 1.4;
   }
   land(amt = 0.5) { this.load.v += amt * 2.6; }
+  // a hand just clipped something: that arm snaps in for a beat
+  graze(side) { if (this.grazeT[side] !== undefined) this.grazeT[side] = 0.45; }
 
   // ---- helpers ---------------------------------------------------------
   // root-local point -> world (root carries no scale)
@@ -256,8 +259,11 @@ export class SkaterMotion {
     this.accelS += ((speed - this.lastSpeed) / Math.max(dt, 1e-4) - this.accelS) * Math.min(1, dt * 4);
     this.lastSpeed = speed;
     const rollTgt = grounded ? clamp(Math.atan2(aLat, 9.81) * 1.15, -0.6, 0.6) : 0;
+    // launching from a standstill: the first pushes drive deeper and lower
+    const launch = pushing && grounded ? clamp((4.5 - speed) / 4.5, 0, 1) : 0;
     const basePitch = grounded && moving ? 0.10 + Math.min(0.16, speed * 0.005) : 0.02;
     const pitchTgt = basePitch + clamp(this.accelS, -8, 8) * 0.02 + crouch * 0.34
+      + launch * 0.11
       + (braking ? -0.16 : 0) + (!grounded ? (ctx.diving ? 0.5 : 0.12) : 0);
     this.roll += (rollTgt - this.roll) * Math.min(1, dt * 7);
     this.pitch += (pitchTgt - this.pitch) * Math.min(1, dt * 7);
@@ -293,7 +299,7 @@ export class SkaterMotion {
     const u = (this.phase % Math.PI) / Math.PI;                         // 0..1 in stroke
 
     // ---- pelvis (COM)
-    const rideY = this.hipY * (moving ? lerp(0.92, 0.84, clamp(speed / 26, 0, 1)) : 0.97)
+    const rideY = this.hipY * (moving ? lerp(0.92, 0.84, clamp(speed / 26, 0, 1)) : 0.97) - launch * 0.05
       - crouch * 0.24 - this.load.x - cornerKnee
       + hop
       + (!grounded ? 0.05 : 0)
@@ -386,7 +392,7 @@ export class SkaterMotion {
           pushSide * this.hipW * (0.7 + 1.9 * s * effort),
           this.ankleH,
           0.10 - 0.45 * s * effort,
-          pushSide * 0.28 * s, true);
+          pushSide * (0.28 + launch * 0.3) * s, true);
       } else {
         const s = (u - 0.58) / 0.42;
         setTgt(pushSide,
@@ -551,8 +557,15 @@ export class SkaterMotion {
         _v2.set(side * 0.55, -0.15 + 0.55 * Math.sin(this.wmP + side), 0.5 * Math.cos(this.wmP + side));
         _v1.lerp(_v2, stumble * 0.85);
       }
+      // graze: the clipped arm yanks in fast, then releases
+      const gz = this.grazeT[key];
+      if (gz > 0) {
+        this.grazeT[key] = Math.max(0, gz - dt);
+        const e = Math.min(1, gz / 0.45);
+        _v1.lerp(_v2.set(side * 0.10, -0.70, 0.22), 0.85 * e);
+      }
       _v1.normalize();
-      cur.lerp(_v1, Math.min(1, dt * 9)).normalize();
+      cur.lerp(_v1, Math.min(1, dt * (9 + (gz > 0 ? 26 : 0)))).normalize();
       this.dirW(cur, _v3);
       const arm = b[key + 'arm'], fore = b[key + 'forearm'], hand = this.hands[key];
       if (arm && fore) {

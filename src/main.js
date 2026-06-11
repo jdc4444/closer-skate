@@ -413,6 +413,7 @@ function signedAngle(a, b, up) {
 // a corner is the whole show: the body pulses through it (rig.corner) and
 // the camera lags, then sweeps around with a flourish (cornerT drives both)
 const _cornerN = new THREE.Vector3();
+const grazeCool = { left: 0, right: 0 };
 let cornerT = 9, cornerRoll = 0;
 function startCorner(oldN) {
   _t2.crossVectors(oldN, player.n);
@@ -530,6 +531,11 @@ function updatePlayer(dt) {
       }
       if (ev.lost) respawn();
     }
+    // nothing may intersect the body — poles and walls push it out even
+    // when standing still or drifting sideways
+    const bodyHit = SURF.resolveBody(boxes, player.p, player.n, 0.32);
+    if (bodyHit && bodyHit.box.slim && player.v > 9 && player.invulnT <= 0) stumble();
+    else if (bodyHit && player.v > 2) player.v *= 0.995;
   } else {
     player.airT += dt;
     // hold space to glide — wings out, the city beneath you; shift to dive
@@ -628,6 +634,16 @@ function updatePlayer(dt) {
         }
       }
     }
+    // flying through geometry is not a thing: push out and bleed the
+    // velocity component aimed into the face (a soft bonk)
+    if (!player.grounded) {
+      const hit = SURF.resolveBody(boxes, player.p, player.gravN, 0.3);
+      if (hit) {
+        _t1.set(0, 0, 0).setComponent(hit.axis, hit.sign);
+        const into = player.vel.dot(_t1);
+        if (into < 0) player.vel.addScaledVector(_t1, -into * 1.06);
+      }
+    }
     if (player.p.y < -2.5 || player.p.y > 240 || !isFinite(player.p.y)) respawn();
   }
 
@@ -636,10 +652,21 @@ function updatePlayer(dt) {
     respawn();
   }
 
-  // traffic is real: clip a car and you eat asphalt
-  if (playing && player.grounded && player.invulnT <= 0 && city.carHit(player.p)) {
-    stumble();
-    toast('CLIPPED BY TRAFFIC', 1.2);
+  // traffic is real: cars shove you out bodily, and you eat asphalt
+  if (playing && player.grounded) {
+    const car = city.carHit(player.p);
+    if (car) {
+      const g = car.group.position;
+      const [hw, hd] = car.axis === 'z' ? [1.45, 2.85] : [2.85, 1.45];
+      const dx = player.p.x - g.x, dz = player.p.z - g.z;
+      const px = hw - Math.abs(dx), pz = hd - Math.abs(dz);
+      if (px < pz) player.p.x += Math.sign(dx || 1) * px;
+      else player.p.z += Math.sign(dz || 1) * pz;
+      if (player.invulnT <= 0) {
+        stumble();
+        toast('CLIPPED BY TRAFFIC', 1.2);
+      }
+    }
   }
   if (playing && members.length < 28) {
     const rec = city.tryRecruit(player.p, 7.5);
@@ -683,6 +710,30 @@ function updatePlayer(dt) {
   // hesitates a beat, then whips around to the new surface.
   const bodyK = cornerT < 0.15 ? 9 : cornerT < 0.6 ? 26 : 16;
   poseRig(player.rig, player.p, player.n, player.f, 1 - Math.exp(-bodyK * dt));
+  // even an arm grazing a pole reads: the arm yanks in, the lamp swings.
+  // Probes the elbow and hand of each arm against slim obstacles.
+  if (playing && player.rig.armPoints) {
+    grazeCool.left = Math.max(0, grazeCool.left - dt);
+    grazeCool.right = Math.max(0, grazeCool.right - dt);
+    for (const pt of player.rig.armPoints()) {
+      if (grazeCool[pt.side] > 0) continue;
+      const h = pt.p;
+      for (const b of boxes) {
+        if (!b.slim) continue;
+        if (h.x > b.min.x - 0.22 && h.x < b.max.x + 0.22 &&
+            h.y > b.min.y && h.y < b.max.y + 0.1 &&
+            h.z > b.min.z - 0.22 && h.z < b.max.z + 0.22) {
+          player.rig.graze?.(pt.side);
+          city.shakeNear(h, 1.7);
+          audio.blip([1318, 988], 'triangle', 0.02, 0.06, 0.09);
+          if (player.v > 4) player.v *= 0.985;
+          grazeCool[pt.side] = 0.6;
+          break;
+        }
+      }
+    }
+  }
+
   player.rig.animate(elapsed, player.grounded ? player.v : player.vel.length(), steer + wobble, player.tuck, {
     grounded: player.grounded,
     pushing: playing && pushInput(),
@@ -922,6 +973,16 @@ window.__test = {
   f: () => ({ x: +player.f.x.toFixed(2), y: +player.f.y.toFixed(2), z: +player.f.z.toFixed(2) }),
   setF: (x, z) => { player.f.set(x, 0, z).normalize(); },
   cornerDbg: () => ({ cam: +cornerT.toFixed(2), roll: +cornerRoll.toFixed(2) }),
+  slimNear: () => {
+    let best = null, bd = Infinity;
+    for (const b of city.activeBoxes(player.p)) {
+      if (!b.slim) continue;
+      const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+      const d = (cx - player.p.x) ** 2 + (cz - player.p.z) ** 2;
+      if (d < bd) { bd = d; best = { x: +cx.toFixed(1), z: +cz.toFixed(1), h: +b.max.y.toFixed(1), d: +Math.sqrt(d).toFixed(1) }; }
+    }
+    return best;
+  },
   wallNear: (minH = 18) => {
     let best = null, bd = Infinity;
     for (const b of city.activeBoxes(player.p)) {
