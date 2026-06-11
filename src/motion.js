@@ -131,12 +131,14 @@ export class SkaterMotion {
     // turning at a standstill: feet hold their world heading and step around
     this.pivot = { yawL: 0, yawR: 0, step: 0, s: 0, shift: 0 };
     this.grazeT = { left: 0, right: 0 };   // arm-hit reactions, per side
+    this.crashS = { t: 9, sev: 0 };        // hard-impact sprawl + recovery
+    this.glance = { next: 4, t: 0 };       // idle glances toward the party
     this.wmP = 0;              // windmill phase (stumble arms)
     this.elapsed = 0;
     // smoothed targets: feet (root-local), arm dirs (root-local)
     this.foot = {
-      left:  { p: new THREE.Vector3(this.sideL * this.hipW, this.ankleH, 0.02), yaw: 0 },
-      right: { p: new THREE.Vector3(-this.sideL * this.hipW, this.ankleH, 0.02), yaw: 0 },
+      left:  { p: new THREE.Vector3(this.sideL * this.hipW, this.ankleH, 0.02), yaw: 0, flick: 0 },
+      right: { p: new THREE.Vector3(-this.sideL * this.hipW, this.ankleH, 0.02), yaw: 0, flick: 0 },
     };
     this.armDir = {
       left:  new THREE.Vector3(this.sideL * 0.34, -0.82, 0.12).normalize(),
@@ -159,6 +161,12 @@ export class SkaterMotion {
   land(amt = 0.5) { this.load.v += amt * 2.6; }
   // a hand just clipped something: that arm snaps in for a beat
   graze(side) { if (this.grazeT[side] !== undefined) this.grazeT[side] = 0.45; }
+  // a hard impact: go down into a sprawl, then climb back up
+  crash(sev = 1) {
+    this.crashS.t = 0;
+    this.crashS.sev = clamp(sev, 0.3, 1.3);
+    this.load.v += 2.5 + sev * 2;
+  }
 
   // ---- helpers ---------------------------------------------------------
   // root-local point -> world (root carries no scale)
@@ -249,7 +257,16 @@ export class SkaterMotion {
     const speed = ctx.speed || 0;
     const grounded = ctx.grounded !== false;
     const crouch = ctx.crouch || 0;
-    const stumble = clamp((ctx.stumble || 0) / 0.9, 0, 1);
+    let stumble = clamp((ctx.stumble || 0) / 0.9, 0, 1);
+    // crash sprawl: a fast hit drives the body down hard, recovery is slow
+    let crashE = 0;
+    if (this.crashS.t < 1) {
+      this.crashS.t = Math.min(1, this.crashS.t + dt / (0.9 + this.crashS.sev * 0.5));
+      const cph = this.crashS.t;
+      const rise = cph < 0.2 ? cph / 0.2 : 1 - (cph - 0.2) / 0.8;
+      crashE = Math.max(0, rise) * this.crashS.sev;
+      stumble = Math.max(stumble, Math.min(1, crashE * 1.2));
+    }
     const pushing = !!ctx.pushing && grounded;
     const braking = !!ctx.braking && grounded && speed > 2.5;
     const moving = speed > 2.2;
@@ -263,7 +280,7 @@ export class SkaterMotion {
     const launch = pushing && grounded ? clamp((4.5 - speed) / 4.5, 0, 1) : 0;
     const basePitch = grounded && moving ? 0.10 + Math.min(0.16, speed * 0.005) : 0.02;
     const pitchTgt = basePitch + clamp(this.accelS, -8, 8) * 0.02 + crouch * 0.34
-      + launch * 0.11
+      + launch * 0.11 + crashE * 0.5
       + (braking ? -0.16 : 0) + (!grounded ? (ctx.diving ? 0.5 : 0.12) : 0);
     this.roll += (rollTgt - this.roll) * Math.min(1, dt * 7);
     this.pitch += (pitchTgt - this.pitch) * Math.min(1, dt * 7);
@@ -299,7 +316,7 @@ export class SkaterMotion {
     const u = (this.phase % Math.PI) / Math.PI;                         // 0..1 in stroke
 
     // ---- pelvis (COM)
-    const rideY = this.hipY * (moving ? lerp(0.92, 0.84, clamp(speed / 26, 0, 1)) : 0.97) - launch * 0.05
+    const rideY = this.hipY * (moving ? lerp(0.92, 0.84, clamp(speed / 26, 0, 1)) : 0.97) - launch * 0.05 - crashE * 0.26
       - crouch * 0.24 - this.load.x - cornerKnee
       + hop
       + (!grounded ? 0.05 : 0)
@@ -400,6 +417,8 @@ export class SkaterMotion {
           this.ankleH + 0.07 * Math.sin(Math.PI * s),
           -0.35 * effort + (0.45 * effort + 0.12) * s,
           pushSide * 0.28 * (1 - s), false);
+        // the toe flicks through the recovery — the snap of a real stroke
+        tgtFor(pushSide).flick = Math.sin(Math.PI * Math.min(1, s * 1.6)) * 0.55 * effort;
       }
     } else if (moving) {
       // coast: easy scissor on the last support
@@ -457,6 +476,11 @@ export class SkaterMotion {
       this.pivot.shift *= Math.max(0, 1 - dt * 6);
     }
 
+    // a sprawl widens the stance — survival posture
+    if (crashE > 0.05) {
+      fl.p.x *= 1 + crashE * 0.5;
+      fr.p.x *= 1 + crashE * 0.5;
+    }
     // stumble: quick lateral catch-steps under a wobbling body
     if (stumble > 0.05 && grounded) {
       const catchX = Math.sin(t * 9.1) * 0.08 * stumble;
@@ -485,6 +509,8 @@ export class SkaterMotion {
         strad = this.strad;
       }
     }
+    fl.flick *= Math.max(0, 1 - dt * 10);
+    fr.flick *= Math.max(0, 1 - dt * 10);
     this._dbgInfo.straddle = strad ? +strad.ang.toFixed(2) : 0;
 
     // ---- solve legs (world space)
@@ -524,6 +550,8 @@ export class SkaterMotion {
       if (stage >= 4) {
         _st1.copy(Z).applyAxisAngle(Y, f.yaw).applyQuaternion(_qf);
         _st2.copy(Y).applyQuaternion(_qf);
+        _st1.addScaledVector(_st2, -f.flick);   // toes point through the flick
+        _st1.normalize();
         this.setFrame(key + 'foot', _st1, _st2);
       }
       if (this._dbgInfo) {
@@ -582,7 +610,18 @@ export class SkaterMotion {
 
     // ---- head: stabilized gaze, looking through the turn
     if (stage < 6) { this._dbgFinish(); return; }
-    const lookTgt = clamp((ctx.turn || 0) * 0.55, -0.5, 0.5) + noise(t * 0.33, 21) * 0.04;
+    let lookTgt = clamp((ctx.turn || 0) * 0.55, -0.5, 0.5) + noise(t * 0.33, 21) * 0.04;
+    // every few seconds, a glance toward where the night is headed
+    this.glance.next -= dt;
+    if (this.glance.next < 0) {
+      this.glance.next = 3.5 + (noise(t, 33) + 1) * 1.6;
+      if (grounded && !braking && Math.abs(ctx.lookTo || 0) > 0.25) this.glance.t = 1.1;
+    }
+    if (this.glance.t > 0) {
+      this.glance.t -= dt;
+      lookTgt += clamp(ctx.lookTo || 0, -0.7, 0.7)
+        * Math.sin(clamp(this.glance.t / 1.1, 0, 1) * Math.PI);
+    }
     this.lookYaw += (lookTgt - this.lookYaw) * Math.min(1, dt * 6);
     const hpTgt = !grounded ? (ctx.diving ? 0.35 : -0.15) : crouch * 0.15 + stumble * 0.14 - this.pitch * 0.55;
     this.headPitch += (hpTgt - this.headPitch) * Math.min(1, dt * 5);
@@ -629,6 +668,7 @@ export class SkaterMotion {
       roll: +this.roll.toFixed(2), pitch: +this.pitch.toFixed(2),
       load: +this.load.x.toFixed(2),
       pivot: { yL: +this.pivot.yawL.toFixed(2), yR: +this.pivot.yawR.toFixed(2), step: this.pivot.step, s: +this.pivot.s.toFixed(2) },
+      crash: +this.crashS.t.toFixed(2),
       geo: {
         thighL: +this.thighL.toFixed(3), shinL: +this.shinL.toFixed(3),
         ankleH: +this.ankleH.toFixed(3), hipW: +this.hipW.toFixed(3),

@@ -414,6 +414,7 @@ function signedAngle(a, b, up) {
 // the camera lags, then sweeps around with a flourish (cornerT drives both)
 const _cornerN = new THREE.Vector3();
 const grazeCool = { left: 0, right: 0 };
+let frondCool = 0;
 let cornerT = 9, cornerRoll = 0;
 function startCorner(oldN) {
   _t2.crossVectors(oldN, player.n);
@@ -520,7 +521,13 @@ function updatePlayer(dt) {
       const ev = {};
       _cornerN.copy(player.n);
       SURF.stepGrounded(boxes, player, player.v * dt, ev);
-      if (ev.stumbled) stumble();
+      if (ev.stumbled) {
+        // a pole taken at full speed is a wipeout, not a wobble
+        if (ev.hitSlim && player.v > 14 && player.invulnT <= 0) {
+          crash(Math.min(1.3, player.v / 18));
+          toast('POLE. OUCH.', 1.2);
+        } else stumble();
+      }
       if (ev.climbed && playing) flow += 25;
       if (ev.climbed || ev.wrapped) startCorner(_cornerN);
       if (ev.fell) {
@@ -534,7 +541,10 @@ function updatePlayer(dt) {
     // nothing may intersect the body — poles and walls push it out even
     // when standing still or drifting sideways
     const bodyHit = SURF.resolveBody(boxes, player.p, player.n, 0.32);
-    if (bodyHit && bodyHit.box.slim && player.v > 9 && player.invulnT <= 0) stumble();
+    if (bodyHit && bodyHit.box.slim && player.v > 14 && player.invulnT <= 0) {
+      crash(Math.min(1.3, player.v / 18));
+      toast('POLE. OUCH.', 1.2);
+    } else if (bodyHit && bodyHit.box.slim && player.v > 9 && player.invulnT <= 0) stumble();
     else if (bodyHit && player.v > 2) player.v *= 0.995;
   } else {
     player.airT += dt;
@@ -606,10 +616,19 @@ function updatePlayer(dt) {
       } else {
         player.v = landV;
       }
-      // slamming in from terminal velocity hurts — glide to land soft
+      // slamming in from terminal velocity hurts. Hold SHIFT through the
+      // impact to roll out of it and keep your speed.
       if (playing && fallSpeed > 30) {
-        player.invulnT = 0;
-        stumble();
+        if (tuckInput()) {
+          player.v = Math.min(landV * 0.85 + 4, 42);
+          player.rig.crash?.(0.4);
+          flow += 60;
+          toast('ROLLED OUT', 0.9);
+          audio.blip([392, 523, 659], 'sine', 0.05, 0.12, 0.3);
+        } else {
+          player.invulnT = 0;
+          crash(Math.min(1.3, fallSpeed / 34));
+        }
       }
       player.airT = 0;
     }
@@ -641,7 +660,10 @@ function updatePlayer(dt) {
       if (hit) {
         _t1.set(0, 0, 0).setComponent(hit.axis, hit.sign);
         const into = player.vel.dot(_t1);
-        if (into < 0) player.vel.addScaledVector(_t1, -into * 1.06);
+        if (into < 0) {
+          player.vel.addScaledVector(_t1, -into * 1.06);
+          if (into < -17) { player.rig.crash?.(0.6); shake = Math.max(shake, 0.6); }
+        }
       }
     }
     if (player.p.y < -2.5 || player.p.y > 240 || !isFinite(player.p.y)) respawn();
@@ -668,6 +690,20 @@ function updatePlayer(dt) {
       }
     }
   }
+  // brushing a palm canopy rustles it (no physics, just life)
+  frondCool = Math.max(0, frondCool - dt);
+  if (playing && frondCool <= 0) {
+    for (const f of city.fronds) {
+      const dx = player.p.x - f.x, dz = player.p.z - f.z;
+      if (dx * dx + dz * dz < 3.2 && Math.abs(player.p.y - f.topY) < 1.6) {
+        f.shakeT = Math.max(f.shakeT, 1.1);
+        audio.blip([196, 165], 'sine', 0.05, 0.05, 0.18);
+        frondCool = 0.9;
+        break;
+      }
+    }
+  }
+
   if (playing && members.length < 28) {
     const rec = city.tryRecruit(player.p, 7.5);
     if (rec) {
@@ -719,10 +755,11 @@ function updatePlayer(dt) {
       if (grazeCool[pt.side] > 0) continue;
       const h = pt.p;
       for (const b of boxes) {
-        if (!b.slim) continue;
-        if (h.x > b.min.x - 0.22 && h.x < b.max.x + 0.22 &&
+        if (b.rot) continue;
+        const g = b.slim || b.graze ? 0.22 : 0.05;   // big walls: true scrapes only
+        if (h.x > b.min.x - g && h.x < b.max.x + g &&
             h.y > b.min.y && h.y < b.max.y + 0.1 &&
-            h.z > b.min.z - 0.22 && h.z < b.max.z + 0.22) {
+            h.z > b.min.z - g && h.z < b.max.z + g) {
           player.rig.graze?.(pt.side);
           city.shakeNear(h, 1.7);
           audio.blip([1318, 988], 'triangle', 0.02, 0.06, 0.09);
@@ -742,6 +779,13 @@ function updatePlayer(dt) {
     diving: playing && !player.grounded && tuckInput(),
     turn: player.turnRate || 0,
     stumble: player.stumbleT,
+    lookTo: (() => {
+      if (!dest || !player.grounded) return 0;
+      _t1.set(dest.pos.x - player.p.x, 0, dest.pos.z - player.p.z);
+      _t1.addScaledVector(player.n, -_t1.dot(player.n));
+      if (_t1.lengthSq() < 1) return 0;
+      return signedAngle(player.f, _t1.normalize(), player.n);
+    })(),
   });
 
   if (playing && player.v > 3) {
@@ -764,6 +808,17 @@ function stumble() {
   player.stumbleT = 0.9;
   player.invulnT = 1.5;
   shake = 0.5;
+  audio.stumble();
+}
+
+// a real wipeout: sprawl low, bleed almost all speed, slow recovery
+function crash(sev = 1) {
+  if (player.invulnT > 0) return;
+  player.v = Math.min(player.v, 4);
+  player.stumbleT = 1.3;
+  player.invulnT = 2.2;
+  shake = 0.85;
+  player.rig.crash?.(sev);
   audio.stumble();
 }
 

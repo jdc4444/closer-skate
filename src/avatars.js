@@ -422,6 +422,7 @@ export function makeCharacter(opts = {}) {
             braking: !!state?.braking,
             gliding: !!state?.gliding,
             diving: !!state?.diving,
+            lookTo: state?.lookTo ?? 0,
           });
         };
         const _wa2 = new THREE.Vector3(), _wf2 = new THREE.Vector3();
@@ -430,6 +431,7 @@ export function makeCharacter(opts = {}) {
           corner: (asym = 0, oldN = null, edgeW = null) => motion.startCorner(asym, oldN, edgeW),
           land: (amt = 0.5) => motion.land(amt),
           graze: (side) => motion.graze(side),
+          crash: (sev = 1) => motion.crash(sev),
           // arm probe points for graze checks: elbow and hand, each side
           armPoints: () => {
             const out = [];
