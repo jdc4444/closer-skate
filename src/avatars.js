@@ -89,8 +89,9 @@ function quatKeys(bone, times, angles, axis = X, zAngles = null, base = null) {
 }
 
 // measure where each arm actually points at rest, and compute the local
-// rotation that hangs it at the body's side — no guessed offsets, any rig
-function armBases(bones, model) {
+// rotation that aims it at a desired body-space direction — no guessed
+// offsets, any rig. Default target hangs the arms at the sides.
+function armBases(bones, model, dirFor = null) {
   model.updateMatrixWorld(true);
   const out = {};
   for (const side of ['left', 'right']) {
@@ -99,7 +100,9 @@ function armBases(bones, model) {
     const aw = arm.getWorldPosition(new THREE.Vector3());
     const fw = fore.getWorldPosition(new THREE.Vector3());
     const cur = fw.sub(aw).normalize();
-    const desired = new THREE.Vector3(side === 'left' ? 0.24 : -0.24, -0.95, 0.10).normalize();
+    const desired = (dirFor
+      ? dirFor(side)
+      : new THREE.Vector3(side === 'left' ? 0.24 : -0.24, -0.95, 0.10)).normalize();
     const R = new THREE.Quaternion().setFromUnitVectors(cur, desired);
     const wq = arm.getWorldQuaternion(new THREE.Quaternion());
     const localDelta = wq.clone().invert().multiply(R).multiply(wq);
@@ -156,6 +159,120 @@ function buildSkateClip(bones, bases = {}) {
     tracks.push(quatKeys(bones.hips, T, wave(0.25, 0.05, 0.06)));
   }
   return new THREE.AnimationClip('SkateCycle', 1.0, tracks);
+}
+
+// rolling without pushing: legs settled into an easy stagger, arms loose
+function buildCoastClip(bones, bases = {}) {
+  const T = [0, 0.6, 1.2, 1.8, 2.4];
+  const tracks = [];
+  const sway = (phase, amp, offset = 0) =>
+    T.map(t => offset + amp * Math.sin(2 * Math.PI * (t / 2.4) + phase));
+
+  if (bones.leftupleg && bones.rightupleg) {
+    tracks.push(quatKeys(bones.leftupleg, T, sway(0, 0.035, -0.32), X, sway(0, 0.02, 0.05)));
+    tracks.push(quatKeys(bones.rightupleg, T, sway(Math.PI, 0.035, -0.10), X, sway(0, 0.02, -0.05)));
+  }
+  if (bones.leftleg && bones.rightleg) {
+    tracks.push(quatKeys(bones.leftleg, T, sway(0, 0.03, 0.44)));
+    tracks.push(quatKeys(bones.rightleg, T, sway(Math.PI, 0.03, 0.26)));
+  }
+  if (bones.leftfoot && bones.rightfoot) {
+    tracks.push(quatKeys(bones.leftfoot, T, sway(0, 0.02, -0.22)));
+    tracks.push(quatKeys(bones.rightfoot, T, sway(Math.PI, 0.02, -0.16)));
+  }
+  if (bones.leftarm && bones.rightarm) {
+    tracks.push(quatKeys(bones.leftarm, T, sway(0, 0.05, 0.08), X, null, bases.left));
+    tracks.push(quatKeys(bones.rightarm, T, sway(Math.PI, 0.05, 0.08), X, null, bases.right));
+  }
+  if (bones.leftforearm && bones.rightforearm) {
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.22)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.22)));
+  }
+  if (bones.spine) tracks.push(quatKeys(bones.spine, T, sway(0.5, 0.03, 0.16)));
+  if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.06)));
+  if (bones.hips) {
+    const p0 = bones.hips.position;
+    const vals = [];
+    for (let i = 0; i < T.length; i++) {
+      vals.push(p0.x + p0.y * 0.012 * Math.sin(2 * Math.PI * (T[i] / 2.4)),
+        p0.y * (0.975 + 0.01 * Math.sin(2 * Math.PI * (T[i] / 1.2))), p0.z);
+    }
+    tracks.push(new THREE.VectorKeyframeTrack(`${bones.hips.name}.position`, T, vals));
+    tracks.push(quatKeys(bones.hips, T, sway(0, 0.02, 0.04)));
+  }
+  return new THREE.AnimationClip('Coast', 2.4, tracks);
+}
+
+// airborne: knees drawn up asymmetrically, arms out like wings, toes pointed
+function buildAirClip(bones, wings = {}) {
+  const T = [0, 0.8, 1.6];
+  const tracks = [];
+  const breathe = (phase, amp, offset = 0) =>
+    T.map(t => offset + amp * Math.sin(2 * Math.PI * (t / 1.6) + phase));
+
+  if (bones.leftupleg && bones.rightupleg) {
+    tracks.push(quatKeys(bones.leftupleg, T, breathe(0, 0.04, -0.58), X, breathe(0, 0.02, 0.07)));
+    tracks.push(quatKeys(bones.rightupleg, T, breathe(Math.PI, 0.04, -0.28), X, breathe(0, 0.02, -0.07)));
+  }
+  if (bones.leftleg && bones.rightleg) {
+    tracks.push(quatKeys(bones.leftleg, T, breathe(0, 0.03, 0.58)));
+    tracks.push(quatKeys(bones.rightleg, T, breathe(Math.PI, 0.03, 0.34)));
+  }
+  if (bones.leftfoot && bones.rightfoot) {
+    tracks.push(quatKeys(bones.leftfoot, T, T.map(() => -0.52)));
+    tracks.push(quatKeys(bones.rightfoot, T, T.map(() => -0.46)));
+  }
+  if (bones.leftarm && bones.rightarm) {
+    // wings out, gently riding the air
+    tracks.push(quatKeys(bones.leftarm, T, breathe(0, 0.07), X, null, wings.left));
+    tracks.push(quatKeys(bones.rightarm, T, breathe(Math.PI, 0.07), X, null, wings.right));
+  }
+  if (bones.leftforearm && bones.rightforearm) {
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.12)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.12)));
+  }
+  if (bones.spine) tracks.push(quatKeys(bones.spine, T, breathe(0, 0.02, -0.05)));
+  if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.03)));
+  if (bones.hips) tracks.push(quatKeys(bones.hips, T, breathe(0.4, 0.02, 0.10)));
+  return new THREE.AnimationClip('AirPose', 1.6, tracks);
+}
+
+// braking: a T-stop — leading leg braced, trailing foot turned out, arms low
+function buildBrakeClip(bones, brace = {}) {
+  const T = [0, 0.5, 1.0];
+  const tracks = [];
+  const tremble = (phase, amp, offset = 0) =>
+    T.map(t => offset + amp * Math.sin(2 * Math.PI * t + phase));
+
+  if (bones.leftupleg && bones.rightupleg) {
+    tracks.push(quatKeys(bones.leftupleg, T, tremble(0, 0.015, -0.48), X, tremble(0, 0.01, 0.05)));
+    tracks.push(quatKeys(bones.rightupleg, T, tremble(1, 0.015, -0.06), X, tremble(0, 0.01, -0.20)));
+  }
+  if (bones.leftleg && bones.rightleg) {
+    tracks.push(quatKeys(bones.leftleg, T, tremble(0, 0.012, 0.52)));
+    tracks.push(quatKeys(bones.rightleg, T, tremble(1, 0.012, 0.20)));
+  }
+  if (bones.leftfoot && bones.rightfoot) {
+    tracks.push(quatKeys(bones.leftfoot, T, T.map(() => -0.26)));
+    tracks.push(quatKeys(bones.rightfoot, T, T.map(() => -0.06), X, T.map(() => 0.22)));
+  }
+  if (bones.leftarm && bones.rightarm) {
+    tracks.push(quatKeys(bones.leftarm, T, tremble(0, 0.02, 0.05), X, null, brace.left));
+    tracks.push(quatKeys(bones.rightarm, T, tremble(1, 0.02, 0.05), X, null, brace.right));
+  }
+  if (bones.leftforearm && bones.rightforearm) {
+    tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.30)));
+    tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.30)));
+  }
+  if (bones.spine) tracks.push(quatKeys(bones.spine, T, tremble(0, 0.015, -0.07)));
+  if (bones.hips) {
+    const p0 = bones.hips.position;
+    const vals = [];
+    for (let i = 0; i < T.length; i++) vals.push(p0.x, p0.y * 0.955, p0.z);
+    tracks.push(new THREE.VectorKeyframeTrack(`${bones.hips.name}.position`, T, vals));
+    tracks.push(quatKeys(bones.hips, T, tremble(0.5, 0.012, 0.08)));
+  }
+  return new THREE.AnimationClip('BrakePose', 1.0, tracks);
 }
 
 // at rest: easy knees, arms at the sides, breathing, a slow weight shift
@@ -276,33 +393,55 @@ export function makeCharacter(opts = {}) {
 
   const mixer = new THREE.AnimationMixer(model);
   const bases = armBases(bones, model);
-  const skate = mixer.clipAction(buildSkateClip(bones, bases));
+  const wings = armBases(bones, model, side =>
+    new THREE.Vector3(side === 'left' ? 0.92 : -0.92, -0.18, 0.06));
+  const brace = armBases(bones, model, side =>
+    new THREE.Vector3(side === 'left' ? 0.46 : -0.46, -0.80, 0.34));
   // if the model shipped with a baked clip, that's the idle
   const native = (src.animations ?? []).find(c => c.duration > 0.5);
-  const idleClip = native ?? buildIdleClip(bones, bases);
-  const idle = mixer.clipAction(idleClip);
-  skate.play();
-  idle.play();
-  skate.setEffectiveWeight(0);
-  idle.setEffectiveWeight(1);
-  idle.time = Math.random() * idleClip.duration;
+  const actions = {
+    idle:  mixer.clipAction(native ?? buildIdleClip(bones, bases)),
+    skate: mixer.clipAction(buildSkateClip(bones, bases)),
+    coast: mixer.clipAction(buildCoastClip(bones, bases)),
+    air:   mixer.clipAction(buildAirClip(bones, wings)),
+    brake: mixer.clipAction(buildBrakeClip(bones, brace)),
+  };
+  for (const k in actions) {
+    actions[k].play();
+    actions[k].setEffectiveWeight(k === 'idle' ? 1 : 0);
+  }
+  actions.idle.time = Math.random() * actions.idle.getClip().duration;
 
+  // eased weights per action — raw state flips thrash at the thresholds
+  const w = { idle: 1, skate: 0, coast: 0, air: 0, brake: 0 };
+  const tgt = { idle: 0, skate: 0, coast: 0, air: 0, brake: 0 };
   let lastT = null;
-  let blend = 0;   // eased skate/idle weight — raw speed thrashes at the threshold
-  function animate(t, speed, leanIn = 0, crouch = 0) {
+  function animate(t, speed, leanIn = 0, crouch = 0, state = null) {
     const dt = lastT === null ? 0.016 : Math.max(0, Math.min(0.1, t - lastT));
     lastT = t;
-    const target = THREE.MathUtils.clamp((speed - 3) / 6, 0, 1);
-    blend += (target - blend) * Math.min(1, dt * 5);
-    skate.setEffectiveWeight(blend);
-    idle.setEffectiveWeight(1 - blend);
-    skate.timeScale = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.8);
+    const grounded = state ? state.grounded !== false : true;
+    const pushing = state ? !!state.pushing : speed > 3;
+    const braking = state ? !!state.braking : false;
+    const move = THREE.MathUtils.clamp((speed - 2.5) / 5, 0, 1);
+    tgt.idle = 0; tgt.skate = 0; tgt.coast = 0; tgt.air = 0; tgt.brake = 0;
+    if (!grounded) tgt.air = 1;
+    else if (braking && speed > 3) { tgt.brake = move; tgt.idle = 1 - move; }
+    else if (pushing)              { tgt.skate = move; tgt.idle = 1 - move; }
+    else                           { tgt.coast = move; tgt.idle = 1 - move; }
+    let sum = 0;
+    for (const k in w) { w[k] += (tgt[k] - w[k]) * Math.min(1, dt * 6); sum += w[k]; }
+    for (const k in w) actions[k].setEffectiveWeight(w[k] / sum);
+    actions.skate.timeScale = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.8);
     mixer.update(dt);
-    // post-mix body language: tuck and carve
+    // post-mix body language: tuck, carve, look into the turn
     if (bones.spine1) bones.spine1.rotation.x += crouch * 0.55;
-    if (bones.spine) bones.spine.rotation.x += crouch * 0.25;
+    if (bones.spine) {
+      bones.spine.rotation.x += crouch * 0.25;
+      bones.spine.rotation.y += -leanIn * 0.14;
+    }
+    if (bones.neck) bones.neck.rotation.y += -leanIn * 0.18;
     lean.rotation.z = THREE.MathUtils.lerp(lean.rotation.z, -leanIn * 0.38, 0.15);
-    lean.rotation.x = blend * 0.08 + crouch * 0.16;
+    lean.rotation.x = w.skate * 0.08 + crouch * 0.16 - w.air * 0.06;
     lean.position.y = -crouch * 0.26;
   }
 
@@ -318,8 +457,9 @@ export function makeCharacter(opts = {}) {
     },
     _dbg: {
       bones: Object.keys(bones),
-      idle: idleClip.name,
-      skateTracks: skate.getClip().tracks.length,
+      idle: actions.idle.getClip().name,
+      skateTracks: actions.skate.getClip().tracks.length,
+      weights: () => Object.fromEntries(Object.entries(w).map(([k, v]) => [k, +v.toFixed(2)])),
       baseL: bases.left ? bases.left.toArray().map(v => +v.toFixed(3)) : null,
     },
   };

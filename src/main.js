@@ -119,12 +119,58 @@ scene.environment = envFor(0);
 const WET_MIRROR = true;
 let mirror = null, asphaltSkin = null;
 if (WET_MIRROR) {
-  mirror = new Reflector(new THREE.PlaneGeometry(320, 320), {
+  // reflections only inside the near zone: the 512px buffer undersamples
+  // badly at distance (pixel shimmer), so alpha-fades to the plain fogged
+  // street between 26 and 58 metres from the camera.
+  const fadeShader = {
+    name: 'FadingReflector',
+    uniforms: {
+      color: { value: null },
+      tDiffuse: { value: null },
+      textureMatrix: { value: null },
+    },
+    vertexShader: /* glsl */`
+      uniform mat4 textureMatrix;
+      varying vec4 vUv;
+      varying vec3 vWorld;
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
+      void main() {
+        vUv = textureMatrix * vec4( position, 1.0 );
+        vWorld = ( modelMatrix * vec4( position, 1.0 ) ).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: /* glsl */`
+      uniform vec3 color;
+      uniform sampler2D tDiffuse;
+      varying vec4 vUv;
+      varying vec3 vWorld;
+      #include <logdepthbuf_pars_fragment>
+      float blendOverlay( float base, float blend ) {
+        return ( base < 0.5 ? ( 2.0 * base * blend ) : ( 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - blend ) ) );
+      }
+      vec3 blendOverlay( vec3 base, vec3 blend ) {
+        return vec3( blendOverlay( base.r, blend.r ), blendOverlay( base.g, blend.g ), blendOverlay( base.b, blend.b ) );
+      }
+      void main() {
+        #include <logdepthbuf_fragment>
+        vec4 base = texture2DProj( tDiffuse, vUv );
+        float fade = 1.0 - smoothstep( 26.0, 58.0, distance( vWorld, cameraPosition ) );
+        gl_FragColor = vec4( blendOverlay( base.rgb, color ), fade );
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  };
+  mirror = new Reflector(new THREE.PlaneGeometry(170, 170), {
     clipBias: 0.003,
     textureWidth: 512,
     textureHeight: 512,
     color: 0x55606a,
+    shader: fadeShader,
   });
+  mirror.material.transparent = true;
+  mirror.renderOrder = 1;
   mirror.rotation.x = -Math.PI / 2;
   mirror.position.y = 0.02;
   scene.add(mirror);
@@ -136,12 +182,29 @@ if (WET_MIRROR) {
     sky.dome.visible = true;
     sky.sun.visible = true;
   };
+  // the dark wet sheen dies off with the reflections
+  const skinAlpha = (() => {
+    const c = document.createElement('canvas');
+    c.width = c.height = 256;
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(0.42, '#ffffff');
+    grad.addColorStop(0.9, '#000000');
+    grad.addColorStop(1, '#000000');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 256);
+    const t = new THREE.CanvasTexture(c);
+    return t;
+  })();
   asphaltSkin = new THREE.Mesh(
-    new THREE.PlaneGeometry(320, 320),
+    new THREE.PlaneGeometry(170, 170),
     new THREE.MeshStandardMaterial({
       color: 0x1a2026, roughness: 1, metalness: 0,
       transparent: true, opacity: 0.55, depthWrite: false,
+      alphaMap: skinAlpha,
     }));
+  asphaltSkin.renderOrder = 2;
   asphaltSkin.rotation.x = -Math.PI / 2;
   asphaltSkin.position.y = 0.035;
   scene.add(asphaltSkin);
@@ -598,7 +661,11 @@ function updatePlayer(dt) {
   // the body eases toward its physics orientation — wraps, climbs and
   // gravity snaps no longer jolt the limbs around
   poseRig(player.rig, player.p, player.n, player.f, 1 - Math.exp(-16 * dt));
-  player.rig.animate(elapsed, player.grounded ? player.v : 4, steer + wobble, player.tuck);
+  player.rig.animate(elapsed, player.v, steer + wobble, player.tuck, {
+    grounded: player.grounded,
+    pushing: playing && pushInput(),
+    braking: playing && brakeInput(),
+  });
 
   if (playing && player.v > 3) {
     flow += dt * player.v * 0.55 * (1 + members.length * 0.12);
