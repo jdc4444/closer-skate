@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>CLOSER — an infinite disco, on rollerskates</title>
+<style>
+  :root {
+    --ink: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body {
+    font-family: Futura, "Avenir Next", "Century Gothic", sans-serif;
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { position: fixed; inset: 0; }
+  #app canvas {
+    display: block;
+    filter: saturate(1.12);
+  }
+
+  /* ---------- film overlays ---------- */
+  #vignette {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 48%, transparent 52%, rgba(8, 0, 18, 0.42) 100%);
+    z-index: 21;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 30;
+    opacity: 0;
+    transition: opacity 1.2s ease;
+    text-transform: uppercase;
+    text-shadow: 0 0 14px rgba(255, 160, 220, 0.35), 0 1px 2px rgba(0,0,0,0.5);
+  }
+  #hud.on { opacity: 1; }
+  .corner { position: absolute; letter-spacing: 0.22em; font-size: 13px; }
+  #era    { top: 22px; left: 26px; }
+  #flow   { top: 22px; right: 26px; text-align: right; line-height: 1.7; }
+  #pack   { font-size: 11px; opacity: 0.8; }
+  #speed  { bottom: 22px; right: 26px; text-align: right; font-size: 12px; opacity: 0.85; }
+  #help   { bottom: 22px; left: 26px; font-size: 11px; opacity: 0.7; letter-spacing: 0.18em; transition: opacity 2s ease; }
+
+  #meterWrap {
+    position: absolute; bottom: 30px; left: 50%;
+    transform: translateX(-50%);
+    width: 240px; text-align: center;
+  }
+  #meterLabel { font-size: 11px; letter-spacing: 0.34em; margin-bottom: 7px; opacity: 0.95; }
+  #meterBar {
+    height: 3px; width: 100%;
+    background: rgba(255,255,255,0.18);
+    border-radius: 2px; overflow: hidden;
+  }
+  #meterFill {
+    height: 100%; width: 0%;
+    background: #fff;
+    border-radius: 2px;
+    box-shadow: 0 0 10px rgba(255,255,255,0.9);
+    transition: width 0.15s linear, background 0.4s ease;
+  }
+  #toast {
+    position: absolute; top: 34%; left: 50%;
+    transform: translateX(-50%);
+    font-size: 17px; letter-spacing: 0.42em;
+    text-align: center; white-space: nowrap;
+    opacity: 0; transition: opacity 0.6s ease;
+    text-shadow: 0 0 22px rgba(255,180,230,0.8);
+  }
+  #toast.show { opacity: 1; }
+
+  /* ---------- title screen: how to play ---------- */
+  #title {
+    position: fixed; inset: 0;
+    background: radial-gradient(ellipse at 50% 110%, #4a1d33 0%, #221030 55%, #140b1e 100%);
+    color: #f6e8d8;
+    z-index: 40;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    transition: opacity 1.6s ease;
+    text-transform: uppercase;
+  }
+  #title.gone { opacity: 0; pointer-events: none; }
+  .tcorner { position: absolute; font-size: 13px; letter-spacing: 0.28em; }
+  #tname  { top: 26px; left: 30px; font-weight: bold; color: #ffd166; }
+  #tright { top: 26px; right: 30px; opacity: 0.6; }
+  #howto {
+    max-width: 640px; width: 88%;
+    font-size: 13px; letter-spacing: 0.14em; line-height: 2.05;
+  }
+  #howto h2 {
+    font-size: 14px; letter-spacing: 0.5em; font-weight: normal;
+    color: #ffd166; margin-bottom: 18px; text-align: center;
+  }
+  #howto .goal {
+    text-align: center; margin-bottom: 26px; opacity: 0.95;
+    border-top: 1px solid rgba(246,232,216,0.25);
+    border-bottom: 1px solid rgba(246,232,216,0.25);
+    padding: 14px 0;
+  }
+  #howto .cols { display: flex; gap: 40px; justify-content: center; }
+  #howto .col { flex: 1; max-width: 280px; }
+  #howto .col h3 {
+    font-size: 11px; letter-spacing: 0.4em; font-weight: normal;
+    opacity: 0.6; margin-bottom: 8px;
+  }
+  #howto .k { color: #ffd166; }
+  #tstart {
+    position: absolute; bottom: 10%; left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 0.5em;
+    animation: blink 1.8s ease-in-out infinite;
+  }
+  @keyframes blink { 0%,100% { opacity: 0.25; } 50% { opacity: 1; } }
+</style>
+  <script type="module" crossorigin src="./assets/index-B3IxH-Aw.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="vignette"></div>
+
+  <div id="hud">
+    <div id="era"   class="corner">NIGHT 1 &middot; THE BOARDWALK &middot; 1972</div>
+    <div id="flow"  class="corner">FLOW 000000<br /><span id="pack">SKATING SOLO</span></div>
+    <div id="speed" class="corner">0 KM/H</div>
+    <div id="help"  class="corner">&larr;&rarr; turn &middot; &uarr; push &middot; &darr; brake &middot; space jump (hold: glide) &middot; in air wasd: tilt gravity &middot; shift low/dive &middot; m sound</div>
+    <div id="meterWrap">
+      <div id="meterLabel">FOLLOW THE LIGHT</div>
+      <div id="meterBar"><div id="meterFill"></div></div>
+    </div>
+    <div id="toast"></div>
+  </div>
+
+  <div id="title">
+    <div id="tname"  class="tcorner">C L O S E R</div>
+    <div id="tright" class="tcorner">an infinite disco, on rollerskates</div>
+    <div id="howto">
+      <h2>HOW TO PLAY</h2>
+      <div class="goal">
+        Follow the lights &mdash; the searchlights mark tonight&rsquo;s party.<br />
+        Climb to the rooftop to complete the night.<br />
+        Skate close to lone skaters and they join your troupe.
+      </div>
+      <div class="cols">
+        <div class="col">
+          <h3>On your wheels</h3>
+          <span class="k">&larr; &rarr;</span> carve<br />
+          <span class="k">&uarr;</span> push &nbsp; <span class="k">&darr;</span> brake<br />
+          <span class="k">space</span> jump<br />
+          <span class="k">shift</span> tuck low
+        </div>
+        <div class="col">
+          <h3>In the air</h3>
+          <span class="k">hold space</span> glide<br />
+          <span class="k">w / s</span> tilt gravity<br />
+          <span class="k">a / d</span> roll gravity<br />
+          <span class="k">shift</span> dive
+        </div>
+      </div>
+      <div style="text-align:center; margin-top:18px; opacity:0.6; font-size:11px;">
+        ride any wall or ceiling &mdash; gravity follows your wheels &middot; <span class="k">m</span> sound
+      </div>
+    </div>
+    <div id="tstart" class="tcorner">PRESS SPACE TO SKATE</div>
+  </div>
+
+</body>
+</html>
