@@ -427,7 +427,7 @@ export function makeCharacter(opts = {}) {
         const _wa2 = new THREE.Vector3(), _wf2 = new THREE.Vector3();
         return {
           root, animate: animateM, kind: 'hero-motion',
-          corner: (asym = 0) => motion.startCorner(asym),
+          corner: (asym = 0, oldN = null, edgeW = null) => motion.startCorner(asym, oldN, edgeW),
           land: (amt = 0.5) => motion.land(amt),
           armDir: () => {
             bones.leftarm.getWorldPosition(_wa2);

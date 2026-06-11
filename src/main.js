@@ -418,7 +418,7 @@ function startCorner(oldN) {
   _t2.crossVectors(oldN, player.n);
   const asym = _t2.lengthSq() > 1e-4
     ? THREE.MathUtils.clamp(_t2.normalize().dot(player.f), -1, 1) : 0;
-  player.rig.corner?.(asym);
+  player.rig.corner?.(asym, oldN, player.p);
   cornerT = 0;
   cornerRoll = asym;
   audio.blip([147, 196, 262], 'sine', 0.045, 0.10, 0.26);

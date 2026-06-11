@@ -18,6 +18,9 @@ const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vect
 // never write to a temp before consuming their arguments
 const _sf1 = new THREE.Vector3(), _sf2 = new THREE.Vector3();
 const _sl1 = new THREE.Vector3(), _sl2 = new THREE.Vector3();
+// straddle temps: per-foot plane transform during corners
+const _qf = new THREE.Quaternion();
+const _st1 = new THREE.Vector3(), _st2 = new THREE.Vector3(), _st3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
 const _m1 = new THREE.Matrix4();
 const X = new THREE.Vector3(1, 0, 0);
@@ -124,7 +127,7 @@ export class SkaterMotion {
     this.roll = 0; this.pitch = 0;       // smoothed balance angles
     this.accelS = 0; this.lastSpeed = 0;
     this.lookYaw = 0; this.headPitch = 0;
-    this.corner = { t: 9, asym: 0, hopped: false };
+    this.corner = { t: 9, asym: 0, hopped: false, oldN: new THREE.Vector3(0, 1, 0), lead: 1 };
     this.wmP = 0;              // windmill phase (stumble arms)
     this.elapsed = 0;
     // smoothed targets: feet (root-local), arm dirs (root-local)
@@ -140,11 +143,15 @@ export class SkaterMotion {
   }
 
   // ---- public events --------------------------------------------------
-  startCorner(asym = 0) {
+  startCorner(asym = 0, oldN = null, edgeW = null) {
     this.corner.t = 0;
     this.corner.asym = clamp(asym, -1, 1);
     this.corner.hopped = false;
-    this.load.v += 2.0;
+    if (oldN) this.corner.oldN.copy(oldN).normalize();
+    this.corner.edgeW = this.corner.edgeW || new THREE.Vector3();
+    if (edgeW) this.corner.edgeW.copy(edgeW); else this.corner.edgeW.copy(this.root.position);
+    this.corner.lead = this.lastSupport || this.sideL;
+    this.load.v += 1.4;
   }
   land(amt = 0.5) { this.load.v += amt * 2.6; }
 
@@ -257,20 +264,21 @@ export class SkaterMotion {
     this.load.v += (-90 * this.load.x - 14 * this.load.v) * dt;
     this.load.x = clamp(this.load.x + this.load.v * dt, -0.08, 0.30);
 
-    // ---- corner pulse
+    // ---- corner pulse (the feet do the storytelling now — see straddle)
     let hop = 0, flare = 0, cornerKnee = 0;
     if (this.corner.t < 1) {
       this.corner.t = Math.min(1, this.corner.t + dt / 0.62);
       const ph = this.corner.t;
-      hop = Math.sin(Math.PI * clamp((ph - 0.14) / 0.62, 0, 1)) * 0.22;
+      hop = Math.sin(Math.PI * clamp((ph - 0.14) / 0.62, 0, 1)) * 0.10;
       flare = Math.sin(Math.PI * ph);
       cornerKnee = ph < 0.16 ? ph / 0.16 * 0.10 : 0;
-      if (!this.corner.hopped && ph > 0.62) { this.corner.hopped = true; this.load.v += 1.6; }
+      if (!this.corner.hopped && ph > 0.62) { this.corner.hopped = true; this.load.v += 1.2; }
     }
 
-    // ---- gait phase
+    // ---- gait phase (strokes pause while stepping across a corner)
+    const inCorner = this.corner.t < 1;
     const effort = pushing ? clamp(1.15 - speed / 38, 0.4, 1) : 0;
-    if (pushing && moving) {
+    if (pushing && moving && !inCorner) {
       const freq = clamp(0.55 + speed * 0.052, 0.6, 2.0);
       this.phase = (this.phase + 2 * Math.PI * freq * dt) % (2 * Math.PI);
     } else {
@@ -403,8 +411,28 @@ export class SkaterMotion {
       fr.p.x += catchX * dt * 22;
     }
 
-    // hop carries the feet with the pelvis (legs stretch through the arc)
-    if (hop > 0) { fl.p.y += hop * 0.8; fr.p.y += hop * 0.8; }
+    // ---- surface straddle: through a corner each foot crosses on its own
+    // beat. The lead foot steps onto the new plane while the trail foot is
+    // still flat on the old one — for a moment she straddles the edge, then
+    // the trail foot steps across. No more both-feet-magnetized-at-once.
+    let strad = null;
+    if (inCorner && this.corner.edgeW) {
+      _q2.copy(this.root.quaternion).invert();
+      _st1.copy(this.corner.oldN).applyQuaternion(_q2).normalize();
+      const ang = Math.acos(clamp(_st1.dot(Y), -1, 1));
+      if (ang > 0.03) {
+        _st2.crossVectors(Y, _st1);
+        if (_st2.lengthSq() < 1e-6) _st2.copy(X);
+        this.strad = this.strad || { axis: new THREE.Vector3(), ang: 0, edge: new THREE.Vector3() };
+        this.strad.axis.copy(_st2.normalize());
+        this.strad.ang = ang;
+        // the physical corner edge, in root-local space — the old-plane foot
+        // stays anchored here while the body travels onto the new surface
+        this.strad.edge.copy(this.corner.edgeW).sub(this.root.position).applyQuaternion(_q2);
+        strad = this.strad;
+      }
+    }
+    this._dbgInfo.straddle = strad ? +strad.ang.toFixed(2) : 0;
 
     // ---- solve legs (world space)
     const stage = (typeof window !== 'undefined' && window.__motionStage) || 9;
@@ -412,17 +440,42 @@ export class SkaterMotion {
     if (stage >= 3) for (const side of [this.sideL, -this.sideL]) {
       const key = side === this.sideL ? 'left' : 'right';
       const f = side === this.sideL ? fl : fr;
-      this.toWorld(f.p, _v5);
-      this.dirW(_v6.set(side * 0.35, 0, 1).normalize(), _v4);
-      this.solveLeg(key, _v5, _v4);
-      // foot frame: flat on the plane, toes along travel (+ stroke yaw)
+      // the foot's own plane: identity on the new surface; during a corner
+      // it stays rolled back onto the old plane until its step window,
+      // lifting through a small arc as it crosses
+      _qf.identity();
+      let lift = 0;
+      if (strad) {
+        const lead = side === this.corner.lead;
+        const a0 = lead ? 0.04 : 0.30, a1 = lead ? 0.28 : 0.58;
+        const s = clamp((this.corner.t - a0) / (a1 - a0), 0, 1);
+        const k = 0.5 - 0.5 * Math.cos(Math.PI * s);
+        // full old-plane pose: the stance offset (body travel stripped)
+        // rotated onto the old surface, anchored at the receding edge —
+        // the leg stretches back to the ground it came from
+        _qf.setFromAxisAngle(strad.axis, strad.ang);
+        _st1.set(f.p.x, f.p.y, clamp(f.p.z, -0.3, 0.3))
+          .applyQuaternion(_qf).add(strad.edge);
+        _st1.lerp(f.p, k);                          // the step across
+        _qf.setFromAxisAngle(strad.axis, strad.ang * (1 - k));
+        lift = Math.sin(Math.PI * s) * 0.12;
+      } else {
+        _st1.copy(f.p);
+      }
+      _st2.copy(Y).applyQuaternion(_qf);
+      _st1.addScaledVector(_st2, lift);
+      this.toWorld(_st1, _st3);
+      this.dirW(_st1.set(side * 0.35, 0, 1).normalize().applyQuaternion(_qf), _v4);
+      this.solveLeg(key, _st3, _v4);
+      // foot frame: flat on its own plane, toes along travel (+ stroke yaw)
       if (stage >= 4) {
-        _v1.copy(Z).applyAxisAngle(Y, f.yaw);
-        this.setFrame(key + 'foot', _v1, Y);
+        _st1.copy(Z).applyAxisAngle(Y, f.yaw).applyQuaternion(_qf);
+        _st2.copy(Y).applyQuaternion(_qf);
+        this.setFrame(key + 'foot', _st1, _st2);
       }
       if (this._dbgInfo) {
         this.b[key + 'foot'].getWorldPosition(_v6);
-        this._dbgInfo['post_' + key] = +_v6.distanceTo(this.toWorld(f.p, _v1)).toFixed(3);
+        this._dbgInfo['post_' + key] = +_v6.distanceTo(_st3).toFixed(3);
       }
     }
 
