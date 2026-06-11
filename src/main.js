@@ -513,6 +513,7 @@ function updatePlayer(dt) {
       (player.tuck > 0.5 ? 0.75 : 1) * (player.stumbleT > 0 ? 0.4 : 1);
     player.f.applyAxisAngle(player.n, appliedSteer * rate * dt);
     player.f.addScaledVector(player.n, -player.f.dot(player.n)).normalize();
+    player.turnRate = appliedSteer * rate;
 
     if (player.v * dt > 1e-5) {
       const ev = {};
@@ -542,6 +543,7 @@ function updatePlayer(dt) {
     }
     if (vn < -46) player.vel.addScaledVector(player.gravN, -46 - vn);
     if (steer !== 0) player.vel.applyAxisAngle(player.gravN, steer * (gliding ? 1.7 : 1.0) * dt);
+    player.turnRate = steer * (gliding ? 1.7 : 1.0);
 
     // gravity sculpting: in the air, W/S pitch your personal "down" and
     // A/D roll it sideways — land feet-first on facades and undersides.
@@ -681,10 +683,14 @@ function updatePlayer(dt) {
   // hesitates a beat, then whips around to the new surface.
   const bodyK = cornerT < 0.15 ? 9 : cornerT < 0.6 ? 26 : 16;
   poseRig(player.rig, player.p, player.n, player.f, 1 - Math.exp(-bodyK * dt));
-  player.rig.animate(elapsed, player.v, steer + wobble, player.tuck, {
+  player.rig.animate(elapsed, player.grounded ? player.v : player.vel.length(), steer + wobble, player.tuck, {
     grounded: player.grounded,
     pushing: playing && pushInput(),
     braking: playing && brakeInput(),
+    gliding: playing && !player.grounded && spaceDown,
+    diving: playing && !player.grounded && tuckInput(),
+    turn: player.turnRate || 0,
+    stumble: player.stumbleT,
   });
 
   if (playing && player.v > 3) {

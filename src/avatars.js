@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { makeSkater } from './skaters.js';
+import { SkaterMotion } from './motion.js';
 
 export const lib = { ready: false, source: null, info: {} };
 
@@ -395,6 +396,58 @@ export function makeCharacter(opts = {}) {
     skirt.position.y = -0.12 * u;
     skirt.castShadow = true;
     bones.hips.add(skirt);
+  }
+
+  // the player gets the full procedural controller (planted feet, balance
+  // dynamics, gait engine); clips remain for the troupe and as a fallback
+  if (isPlayer) {
+    const need = ['hips', 'head', 'leftupleg', 'leftleg', 'leftfoot',
+      'rightupleg', 'rightleg', 'rightfoot', 'leftarm', 'leftforearm',
+      'rightarm', 'rightforearm'];
+    if (need.every(k => bones[k])) {
+      try {
+        const motion = new SkaterMotion(root, model, bones);
+        if (typeof window !== 'undefined') window.__hero = { root, model, bones, motion };
+        let lastT = null;
+        const animateM = (t, speed, leanIn = 0, crouch = 0, state = null) => {
+          const dt = lastT === null ? 0.016 : Math.max(0, Math.min(0.1, t - lastT));
+          lastT = t;
+          motion.update(dt, t, {
+            speed,
+            turn: state?.turn ?? 0,
+            crouch,
+            stumble: state?.stumble ?? 0,
+            grounded: state ? state.grounded !== false : true,
+            pushing: !!state?.pushing,
+            braking: !!state?.braking,
+            gliding: !!state?.gliding,
+            diving: !!state?.diving,
+          });
+        };
+        const _wa2 = new THREE.Vector3(), _wf2 = new THREE.Vector3();
+        return {
+          root, animate: animateM, kind: 'hero-motion',
+          corner: (asym = 0) => motion.startCorner(asym),
+          land: (amt = 0.5) => motion.land(amt),
+          armDir: () => {
+            bones.leftarm.getWorldPosition(_wa2);
+            bones.leftforearm.getWorldPosition(_wf2);
+            _wf2.sub(_wa2).normalize();
+            return { x: +_wf2.x.toFixed(2), y: +_wf2.y.toFixed(2), z: +_wf2.z.toFixed(2) };
+          },
+          _dbg: {
+            bones: Object.keys(bones),
+            motion: () => motion.dbg(),
+            weights: () => ({ motion: 1 }),
+            knee: () => motion.dbg().load,
+            neckY: () => bones.neck ? +bones.neck.rotation.y.toFixed(2) : null,
+            cornerT: () => +motion.corner.t.toFixed(2),
+          },
+        };
+      } catch (e) {
+        lib.info.motionError = String(e).slice(0, 200);
+      }
+    }
   }
 
   const mixer = new THREE.AnimationMixer(model);
