@@ -128,6 +128,8 @@ export class SkaterMotion {
     this.accelS = 0; this.lastSpeed = 0;
     this.lookYaw = 0; this.headPitch = 0;
     this.corner = { t: 9, asym: 0, hopped: false, oldN: new THREE.Vector3(0, 1, 0), lead: 1 };
+    // turning at a standstill: feet hold their world heading and step around
+    this.pivot = { yawL: 0, yawR: 0, step: 0, s: 0, shift: 0 };
     this.wmP = 0;              // windmill phase (stumble arms)
     this.elapsed = 0;
     // smoothed targets: feet (root-local), arm dirs (root-local)
@@ -297,10 +299,12 @@ export class SkaterMotion {
       + (!grounded ? 0.05 : 0)
       + noise(t * 0.9, 3) * 0.004;
     const strokeBob = pushing ? Math.sin(this.phase * 2) * 0.018 * effort : 0;
-    // weight rides the gliding (support) foot
+    // weight rides the gliding (support) foot — and the planted foot
+    // during pivot steps (pivot.shift is written by the feet pass below)
     const weightX = grounded
       ? supSide * (pushing ? 0.045 * Math.sin(u * Math.PI) : 0)
         + (moving ? 0 : this.sideL * noise(t * 0.45, 7) * 0.030)
+        + this.pivot.shift
       : 0;
     const pelvX = weightX + noise(t * 0.7, 1) * 0.003;
     const pelvZ = (braking ? -0.05 : 0.01) + this.pitch * -0.05;
@@ -397,11 +401,54 @@ export class SkaterMotion {
       setTgt(lead, lead * this.hipW * 0.62, this.ankleH, 0.13, 0, true);
       setTgt(-lead, -lead * this.hipW * 0.66, this.ankleH, -0.08, 0, true);
     } else {
-      // idle: parallel stance, slow weight shifts, micro corrections
-      setTgt(this.sideL, this.sideL * (this.hipW * 0.75 + noise(t * 0.3, 5) * 0.008),
-        this.ankleH, 0.03, this.sideL * 0.06, true);
-      setTgt(-this.sideL, -this.sideL * (this.hipW * 0.75 + noise(t * 0.3, 9) * 0.008),
-        this.ankleH, -0.01, -this.sideL * 0.05, true);
+      // idle / pivot. There is no such thing as rotating in place on
+      // skates: planted feet HOLD their world heading while the body turns
+      // (counter-yawing in body space), and when one lags too far behind
+      // it lifts and steps around — alternating little pivot steps.
+      const pv = this.pivot;
+      const turn = ctx.turn || 0;
+      const turning = Math.abs(turn) > 0.25;
+      if (pv.step !== this.sideL) pv.yawL -= turn * dt;
+      if (pv.step !== -this.sideL) pv.yawR -= turn * dt;
+      if (!turning && !pv.step) {
+        pv.yawL *= Math.max(0, 1 - dt * 2.5);
+        pv.yawR *= Math.max(0, 1 - dt * 2.5);
+      }
+      const lagL = Math.abs(pv.yawL), lagR = Math.abs(pv.yawR);
+      if (!pv.step && turning && Math.max(lagL, lagR) > 0.6) {
+        pv.step = lagL >= lagR ? this.sideL : -this.sideL;
+        pv.s = 0;
+      }
+      if (pv.step) {
+        pv.s = Math.min(1, pv.s + dt / 0.15);
+        const k = 0.5 - 0.5 * Math.cos(Math.PI * pv.s);
+        // the stepping foot swings around to land well ahead of the turn —
+        // big deliberate steps, not a frantic shuffle
+        const tgtYaw = turning ? 0.35 * Math.sign(turn) : 0;
+        if (pv.step === this.sideL) pv.yawL = lerp(pv.yawL, tgtYaw, k);
+        else pv.yawR = lerp(pv.yawR, tgtYaw, k);
+        if (pv.s >= 1) { this.load.v += 0.3; pv.step = 0; }
+      }
+      // weight rides whichever foot is planted while the other swings
+      const wantShift = pv.step ? -pv.step * 0.05 * Math.sin(Math.PI * pv.s) : 0;
+      pv.shift += (wantShift - pv.shift) * Math.min(1, dt * 10);
+      const place = (side, yaw, stepping) => {
+        _v6.set(side * (this.hipW * 0.78 + noise(t * 0.3, side * 5) * 0.008), 0,
+          side === this.sideL ? 0.03 : -0.01);
+        _v6.applyAxisAngle(Y, yaw);
+        const lift = stepping ? Math.sin(Math.PI * pv.s) * 0.07 : 0;
+        setTgt(side, _v6.x, this.ankleH + lift, _v6.z,
+          yaw + side * 0.055, !stepping);
+      };
+      place(this.sideL, pv.yawL, pv.step === this.sideL);
+      place(-this.sideL, pv.yawR, pv.step === -this.sideL);
+    }
+    // leaving the standstill cancels any half-taken pivot step
+    if (moving || !grounded || braking) {
+      this.pivot.step = 0;
+      this.pivot.yawL *= Math.max(0, 1 - dt * 6);
+      this.pivot.yawR *= Math.max(0, 1 - dt * 6);
+      this.pivot.shift *= Math.max(0, 1 - dt * 6);
     }
 
     // stumble: quick lateral catch-steps under a wobbling body
@@ -568,6 +615,7 @@ export class SkaterMotion {
       phase: +this.phase.toFixed(2),
       roll: +this.roll.toFixed(2), pitch: +this.pitch.toFixed(2),
       load: +this.load.x.toFixed(2),
+      pivot: { yL: +this.pivot.yawL.toFixed(2), yR: +this.pivot.yawR.toFixed(2), step: this.pivot.step, s: +this.pivot.s.toFixed(2) },
       geo: {
         thighL: +this.thighL.toFixed(3), shinL: +this.shinL.toFixed(3),
         ankleH: +this.ankleH.toFixed(3), hipW: +this.hipW.toFixed(3),
