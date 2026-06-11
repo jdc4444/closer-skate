@@ -93,6 +93,7 @@ export class SkaterMotion {
       this.bind[k] = {
         q0: bones[k].getWorldQuaternion(new THREE.Quaternion()),
         p0: wp(bones[k]),
+        local: bones[k].quaternion.clone(),
       };
     }
     // hands: first bone child of each forearm (for elbow aim)
@@ -227,6 +228,10 @@ export class SkaterMotion {
   update(dt, t, ctx) {
     const b = this.b;
     this.elapsed = t;
+    // the pose is a pure function of state: every mapped bone restarts from
+    // its bind rotation each frame, so per-frame offsets can NEVER accumulate
+    // (the spine once folded itself into the pelvis within a second of load)
+    for (const k in b) b[k].quaternion.copy(this.bind[k].local);
     // one consistent frame: root pose was just written by poseRig
     this.root.updateMatrixWorld(true);
     const speed = ctx.speed || 0;
