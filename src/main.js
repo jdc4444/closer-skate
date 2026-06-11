@@ -410,6 +410,20 @@ function signedAngle(a, b, up) {
   return Math.atan2(_t3.dot(up), a.dot(b));
 }
 
+// a corner is the whole show: the body pulses through it (rig.corner) and
+// the camera lags, then sweeps around with a flourish (cornerT drives both)
+const _cornerN = new THREE.Vector3();
+let cornerT = 9, cornerRoll = 0;
+function startCorner(oldN) {
+  _t2.crossVectors(oldN, player.n);
+  const asym = _t2.lengthSq() > 1e-4
+    ? THREE.MathUtils.clamp(_t2.normalize().dot(player.f), -1, 1) : 0;
+  player.rig.corner?.(asym);
+  cornerT = 0;
+  cornerRoll = asym;
+  audio.blip([147, 196, 262], 'sine', 0.045, 0.10, 0.26);
+}
+
 const _poseQuat = new THREE.Quaternion();
 function poseRig(rig, p, n, f, alpha = 1) {
   rig.root.position.copy(p);
@@ -502,9 +516,11 @@ function updatePlayer(dt) {
 
     if (player.v * dt > 1e-5) {
       const ev = {};
+      _cornerN.copy(player.n);
       SURF.stepGrounded(boxes, player, player.v * dt, ev);
       if (ev.stumbled) stumble();
       if (ev.climbed && playing) flow += 25;
+      if (ev.climbed || ev.wrapped) startCorner(_cornerN);
       if (ev.fell) {
         player.grounded = false;
         player.gravN.copy(player.n);
@@ -571,6 +587,7 @@ function updatePlayer(dt) {
       player.grounded = true;
       player.box = land.box;
       player.vel.set(0, 0, 0);
+      player.rig.land?.(THREE.MathUtils.clamp(fallSpeed / 26, 0.15, 1.25));
       // building-to-building air rewarded
       if (playing && player.airT > 0.55 && land.q > 3.5) {
         flow += Math.round(120 + player.airT * 160);
@@ -605,6 +622,7 @@ function updatePlayer(dt) {
           player.airT = 0;
           if (playing) flow += 50;
           audio.blip([523, 659, 784], 'sine', 0.06, 0.12, 0.35);
+          startCorner(player.gravN);
         }
       }
     }
@@ -659,8 +677,10 @@ function updatePlayer(dt) {
   player.boostPulse = Math.max(0, player.boostPulse - dt * 1.4);
 
   // the body eases toward its physics orientation — wraps, climbs and
-  // gravity snaps no longer jolt the limbs around
-  poseRig(player.rig, player.p, player.n, player.f, 1 - Math.exp(-16 * dt));
+  // gravity snaps no longer jolt the limbs around. Through a corner it
+  // hesitates a beat, then whips around to the new surface.
+  const bodyK = cornerT < 0.15 ? 9 : cornerT < 0.6 ? 26 : 16;
+  poseRig(player.rig, player.p, player.n, player.f, 1 - Math.exp(-bodyK * dt));
   player.rig.animate(elapsed, player.v, steer + wobble, player.tuck, {
     grounded: player.grounded,
     pushing: playing && pushInput(),
@@ -678,6 +698,7 @@ function doJump() {
   player.gravN.copy(player.n);
   player.grounded = false;
   player.airT = 0;
+  player.rig.land?.(0.4);   // push-off recoil
 }
 
 function stumble() {
@@ -780,8 +801,17 @@ function segBoxT(o, d, len, b) {
 }
 
 function updateCamera(dt) {
-  smoothUp.lerp(player.n, 1 - Math.exp(-7 * dt)).normalize();
-  smoothF.lerp(player.f, 1 - Math.exp(-9.5 * dt));
+  // around a corner the camera holds its frame for a beat — the city tips
+  // around the skater — then sweeps in to the new gravity with a flourish
+  cornerT = Math.min(9, cornerT + dt / 0.85);
+  let upK = 7, fK = 9.5;
+  if (cornerT < 1) {
+    const sweep = THREE.MathUtils.smoothstep(cornerT, 0.18, 0.78);
+    upK = THREE.MathUtils.lerp(2.3, 16, sweep);
+    fK = THREE.MathUtils.lerp(3.0, 20, sweep);
+  }
+  smoothUp.lerp(player.n, 1 - Math.exp(-upK * dt)).normalize();
+  smoothF.lerp(player.f, 1 - Math.exp(-fK * dt));
   smoothF.addScaledVector(smoothUp, -smoothF.dot(smoothUp));
   if (smoothF.lengthSq() < 1e-4) smoothF.copy(player.f);
   smoothF.normalize();
@@ -821,8 +851,10 @@ function updateCamera(dt) {
     .addScaledVector(smoothUp, (Math.random() - 0.5) * shake);
   camera.up.copy(smoothUp);
   camera.lookAt(camLook);
+  if (cornerT < 1) camera.rotateZ(cornerRoll * 0.09 * Math.sin(Math.PI * cornerT));
 
-  const fov = 60 + THREE.MathUtils.clamp(player.v - 14, 0, 32) * 0.45 + player.boostPulse * 8;
+  const fov = 60 + THREE.MathUtils.clamp(player.v - 14, 0, 32) * 0.45 + player.boostPulse * 8
+    + (cornerT < 1 ? 5.5 * Math.sin(Math.PI * cornerT) : 0);
   if (Math.abs(camera.fov - fov) > 0.05) {
     camera.fov = fov;
     camera.updateProjectionMatrix();
@@ -882,6 +914,22 @@ window.__test = {
     return best ? { x: best.p.x, y: best.p.y, z: best.p.z, name: best.name } : null;
   },
   f: () => ({ x: +player.f.x.toFixed(2), y: +player.f.y.toFixed(2), z: +player.f.z.toFixed(2) }),
+  setF: (x, z) => { player.f.set(x, 0, z).normalize(); },
+  cornerDbg: () => ({ cam: +cornerT.toFixed(2), roll: +cornerRoll.toFixed(2) }),
+  wallNear: (minH = 18) => {
+    let best = null, bd = Infinity;
+    for (const b of city.activeBoxes(player.p)) {
+      if (b.rot || b.max.y - b.min.y < minH || b.min.y > 1) continue;
+      const cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+      const d = (cx - player.p.x) ** 2 + (cz - player.p.z) ** 2;
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best ? {
+      minX: +best.min.x.toFixed(1), maxX: +best.max.x.toFixed(1),
+      minZ: +best.min.z.toFixed(1), maxZ: +best.max.z.toFixed(1),
+      h: +best.max.y.toFixed(1),
+    } : null;
+  },
   keysDbg: () => [...keys],
   gravN: () => ({ x: +player.gravN.x.toFixed(2), y: +player.gravN.y.toFixed(2), z: +player.gravN.z.toFixed(2) }),
   avatar: () => player.rig._dbg ?? null,

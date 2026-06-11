@@ -69,6 +69,7 @@ function mapBones(model) {
 const _qx = new THREE.Quaternion();
 const _qz = new THREE.Quaternion();
 const X = new THREE.Vector3(1, 0, 0);
+const Y = new THREE.Vector3(0, 1, 0);
 const Z = new THREE.Vector3(0, 0, 1);
 
 function quatKeys(bone, times, angles, axis = X, zAngles = null, base = null) {
@@ -111,28 +112,28 @@ function armBases(bones, model, dirFor = null) {
   return out;
 }
 
-// the skate stride: low stance, legs scissoring, arms countering
-function buildSkateClip(bones, bases = {}) {
+// the skate stride: low stance, legs scissoring, arms countering.
+// opts shape the stride — the fast variant digs deeper and swings harder
+function buildSkateClip(bones, bases = {}, opts = {}) {
+  const { sw = 0.55, stance = -0.38, knee = 0.62, bob = 0.02,
+    spineF = 0.22, name = 'SkateCycle' } = opts;
   const T = [0, 0.25, 0.5, 0.75, 1.0];
   const tracks = [];
-  const SW = 0.55;
-  const STANCE = -0.38;
-  const KNEE = 0.62;
 
   const wave = (phase, amp, offset = 0) =>
     T.map(t => offset + amp * Math.sin(2 * Math.PI * (t + phase)));
 
   if (bones.leftupleg && bones.rightupleg) {
-    tracks.push(quatKeys(bones.leftupleg, T, wave(0, SW, STANCE), X,
+    tracks.push(quatKeys(bones.leftupleg, T, wave(0, sw, stance), X,
       wave(0.25, 0.10, 0.06)));
-    tracks.push(quatKeys(bones.rightupleg, T, wave(0.5, SW, STANCE), X,
+    tracks.push(quatKeys(bones.rightupleg, T, wave(0.5, sw, stance), X,
       wave(0.75, 0.10, -0.06)));
   }
   if (bones.leftleg && bones.rightleg) {
     tracks.push(quatKeys(bones.leftleg, T,
-      T.map(t => KNEE + 0.35 * Math.max(0, Math.sin(2 * Math.PI * t)))));
+      T.map(t => knee + 0.35 * Math.max(0, Math.sin(2 * Math.PI * t)))));
     tracks.push(quatKeys(bones.rightleg, T,
-      T.map(t => KNEE + 0.35 * Math.max(0, Math.sin(2 * Math.PI * (t + 0.5))))));
+      T.map(t => knee + 0.35 * Math.max(0, Math.sin(2 * Math.PI * (t + 0.5))))));
   }
   if (bones.leftfoot && bones.rightfoot) {
     tracks.push(quatKeys(bones.leftfoot, T, wave(0, 0.12, -0.30)));
@@ -140,25 +141,26 @@ function buildSkateClip(bones, bases = {}) {
   }
   if (bones.leftarm && bones.rightarm) {
     // arms hang from their measured rest, swinging with the stride
-    tracks.push(quatKeys(bones.leftarm, T, wave(0.5, SW * 0.4), X, null, bases.left));
-    tracks.push(quatKeys(bones.rightarm, T, wave(0, SW * 0.4), X, null, bases.right));
+    tracks.push(quatKeys(bones.leftarm, T, wave(0.5, sw * 0.4), X, null, bases.left));
+    tracks.push(quatKeys(bones.rightarm, T, wave(0, sw * 0.4), X, null, bases.right));
   }
   if (bones.leftforearm && bones.rightforearm) {
     tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.3)));
     tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.3)));
   }
-  if (bones.spine) tracks.push(quatKeys(bones.spine, T, wave(0.25, 0.05, 0.22)));
+  if (bones.neck) tracks.push(quatKeys(bones.neck, T, wave(0.25, 0.025), Y));
+  if (bones.spine) tracks.push(quatKeys(bones.spine, T, wave(0.25, 0.05, spineF)));
   if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.10)));
   if (bones.hips) {
     const p0 = bones.hips.position;
-    const py = T.map(t => p0.y * (0.965 + 0.02 * Math.sin(4 * Math.PI * t)));
+    const py = T.map(t => p0.y * (0.985 - bob + bob * Math.sin(4 * Math.PI * t)));
     const px = T.map(t => p0.x + p0.y * 0.02 * Math.sin(2 * Math.PI * t));
     const vals = [];
     for (let i = 0; i < T.length; i++) vals.push(px[i], py[i], p0.z);
     tracks.push(new THREE.VectorKeyframeTrack(`${bones.hips.name}.position`, T, vals));
     tracks.push(quatKeys(bones.hips, T, wave(0.25, 0.05, 0.06)));
   }
-  return new THREE.AnimationClip('SkateCycle', 1.0, tracks);
+  return new THREE.AnimationClip(name, 1.0, tracks);
 }
 
 // rolling without pushing: legs settled into an easy stagger, arms loose
@@ -188,6 +190,7 @@ function buildCoastClip(bones, bases = {}) {
     tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.22)));
     tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.22)));
   }
+  if (bones.neck) tracks.push(quatKeys(bones.neck, T, sway(0.3, 0.05), Y));
   if (bones.spine) tracks.push(quatKeys(bones.spine, T, sway(0.5, 0.03, 0.16)));
   if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.06)));
   if (bones.hips) {
@@ -231,6 +234,7 @@ function buildAirClip(bones, wings = {}) {
     tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.12)));
     tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.12)));
   }
+  if (bones.neck) tracks.push(quatKeys(bones.neck, T, breathe(0.5, 0.04), Y));
   if (bones.spine) tracks.push(quatKeys(bones.spine, T, breathe(0, 0.02, -0.05)));
   if (bones.spine1) tracks.push(quatKeys(bones.spine1, T, T.map(() => 0.03)));
   if (bones.hips) tracks.push(quatKeys(bones.hips, T, breathe(0.4, 0.02, 0.10)));
@@ -264,6 +268,7 @@ function buildBrakeClip(bones, brace = {}) {
     tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.30)));
     tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.30)));
   }
+  if (bones.neck) tracks.push(quatKeys(bones.neck, T, T.map(() => 0), Y));
   if (bones.spine) tracks.push(quatKeys(bones.spine, T, tremble(0, 0.015, -0.07)));
   if (bones.hips) {
     const p0 = bones.hips.position;
@@ -302,6 +307,7 @@ function buildIdleClip(bones, bases = {}) {
     tracks.push(quatKeys(bones.leftforearm, T, T.map(() => 0.18)));
     tracks.push(quatKeys(bones.rightforearm, T, T.map(() => 0.18)));
   }
+  if (bones.neck) tracks.push(quatKeys(bones.neck, T, sway(0.7, 0.12), Y));
   if (bones.spine) tracks.push(quatKeys(bones.spine, T, sway(0, 0.025, 0.05)));
   if (bones.hips) {
     const p0 = bones.hips.position;
@@ -402,6 +408,8 @@ export function makeCharacter(opts = {}) {
   const actions = {
     idle:  mixer.clipAction(native ?? buildIdleClip(bones, bases)),
     skate: mixer.clipAction(buildSkateClip(bones, bases)),
+    fast:  mixer.clipAction(buildSkateClip(bones, bases,
+      { sw: 0.9, stance: -0.54, knee: 0.8, bob: 0.04, spineF: 0.36, name: 'SkateFast' })),
     coast: mixer.clipAction(buildCoastClip(bones, bases)),
     air:   mixer.clipAction(buildAirClip(bones, wings)),
     brake: mixer.clipAction(buildBrakeClip(bones, brace)),
@@ -413,9 +421,20 @@ export function makeCharacter(opts = {}) {
   actions.idle.time = Math.random() * actions.idle.getClip().duration;
 
   // eased weights per action — raw state flips thrash at the thresholds
-  const w = { idle: 1, skate: 0, coast: 0, air: 0, brake: 0 };
-  const tgt = { idle: 0, skate: 0, coast: 0, air: 0, brake: 0 };
+  const w = { idle: 1, skate: 0, fast: 0, coast: 0, air: 0, brake: 0 };
+  const tgt = { idle: 0, skate: 0, fast: 0, coast: 0, air: 0, brake: 0 };
+  const knee = { x: 0, v: 0 };        // landing-suspension spring
+  const corner = { t: 9, asym: 0 };   // wrap/climb transition pulse
+  let steerS = 0, headPitch = 0, accelS = 0, lastSpeed = 0;
   let lastT = null;
+
+  // cosine-eased segment: value glides va -> vb as ph crosses [a, b]
+  function seg(ph, a, b, va, vb) {
+    if (ph <= a) return va;
+    if (ph >= b) return vb;
+    return va + (vb - va) * (0.5 - 0.5 * Math.cos(Math.PI * (ph - a) / (b - a)));
+  }
+
   function animate(t, speed, leanIn = 0, crouch = 0, state = null) {
     const dt = lastT === null ? 0.016 : Math.max(0, Math.min(0.1, t - lastT));
     lastT = t;
@@ -423,31 +442,81 @@ export function makeCharacter(opts = {}) {
     const pushing = state ? !!state.pushing : speed > 3;
     const braking = state ? !!state.braking : false;
     const move = THREE.MathUtils.clamp((speed - 2.5) / 5, 0, 1);
-    tgt.idle = 0; tgt.skate = 0; tgt.coast = 0; tgt.air = 0; tgt.brake = 0;
+    const sf = THREE.MathUtils.clamp((speed - 13) / 13, 0, 1);
+    tgt.idle = 0; tgt.skate = 0; tgt.fast = 0; tgt.coast = 0; tgt.air = 0; tgt.brake = 0;
     if (!grounded) tgt.air = 1;
     else if (braking && speed > 3) { tgt.brake = move; tgt.idle = 1 - move; }
-    else if (pushing)              { tgt.skate = move; tgt.idle = 1 - move; }
-    else                           { tgt.coast = move; tgt.idle = 1 - move; }
+    else if (pushing) { tgt.skate = move * (1 - sf); tgt.fast = move * sf; tgt.idle = 1 - move; }
+    else              { tgt.coast = move; tgt.idle = 1 - move; }
     let sum = 0;
     for (const k in w) { w[k] += (tgt[k] - w[k]) * Math.min(1, dt * 6); sum += w[k]; }
     for (const k in w) actions[k].setEffectiveWeight(w[k] / sum);
-    actions.skate.timeScale = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.8);
+    const ts = THREE.MathUtils.clamp(0.5 + speed / 15, 0.5, 1.9);
+    actions.skate.timeScale = ts;
+    actions.fast.timeScale = ts * 1.12;
     mixer.update(dt);
-    // post-mix body language: tuck, carve, look into the turn
-    if (bones.spine1) bones.spine1.rotation.x += crouch * 0.55;
-    if (bones.spine) {
-      bones.spine.rotation.x += crouch * 0.25;
-      bones.spine.rotation.y += -leanIn * 0.14;
+
+    // ---- post-mix body language. Every bone touched below is written by
+    // the mixer each frame (all are clip-bound), so offsets cannot accumulate.
+    // suspension: landings and corner hops compress the knees, then release
+    knee.v += (-92 * knee.x - 15 * knee.v) * dt;
+    knee.x = THREE.MathUtils.clamp(knee.x + knee.v * dt, -0.22, 1.15);
+
+    // the corner pulse: crouch into it, extend through the hop, absorb out
+    let kneeC = 0, hop = 0, flare = 0;
+    if (corner.t < 1) {
+      corner.t = Math.min(1, corner.t + dt / 0.62);
+      const ph = corner.t;
+      kneeC = ph < 0.18 ? seg(ph, 0, 0.18, 0, 0.52)
+            : ph < 0.45 ? seg(ph, 0.18, 0.45, 0.52, -0.14)
+            : ph < 0.72 ? seg(ph, 0.45, 0.72, -0.14, 0.46)
+            :             seg(ph, 0.72, 1, 0.46, 0);
+      hop = Math.sin(Math.PI * THREE.MathUtils.clamp((ph - 0.16) / 0.6, 0, 1)) * 0.30;
+      flare = Math.sin(Math.PI * ph) * 0.5;
     }
-    if (bones.neck) bones.neck.rotation.y += -leanIn * 0.18;
+    const kneeL = Math.max(-0.2, knee.x + kneeC * (1 - 0.35 * corner.asym));
+    const kneeR = Math.max(-0.2, knee.x + kneeC * (1 + 0.35 * corner.asym));
+    if (bones.leftleg) bones.leftleg.rotation.x += kneeL;
+    if (bones.rightleg) bones.rightleg.rotation.x += kneeR;
+    if (bones.leftupleg) bones.leftupleg.rotation.x -= kneeL * 0.45;
+    if (bones.rightupleg) bones.rightupleg.rotation.x -= kneeR * 0.45;
+
+    // smoothed carve: head and shoulders turn into the turn, arms bank
+    steerS += (THREE.MathUtils.clamp(-leanIn, -1, 1) - steerS) * Math.min(1, dt * 6);
+    const wantPitch = !grounded ? (crouch > 0.4 ? 0.34 : -0.16) : crouch * 0.18;
+    headPitch += (wantPitch - headPitch) * Math.min(1, dt * 5);
+    if (bones.neck) {
+      bones.neck.rotation.y += steerS * 0.34;
+      bones.neck.rotation.x += headPitch;
+    }
+    if (bones.spine) bones.spine.rotation.y += steerS * 0.15;
+    const bank = steerS * 0.22;
+    if (bones.leftarm) bones.leftarm.rotation.z += flare * 0.5 + bank;
+    if (bones.rightarm) bones.rightarm.rotation.z += flare * 0.5 - bank;
+
+    // momentum: accelerating presses forward, hard slowing sits back
+    accelS += ((speed - lastSpeed) / Math.max(dt, 1e-4) - accelS) * Math.min(1, dt * 3);
+    lastSpeed = speed;
+    const press = THREE.MathUtils.clamp(accelS, -9, 9) * 0.014;
+
+    if (bones.spine1) bones.spine1.rotation.x += crouch * 0.55;
+    if (bones.spine) bones.spine.rotation.x += crouch * 0.25;
     lean.rotation.z = THREE.MathUtils.lerp(lean.rotation.z, -leanIn * 0.38, 0.15);
-    lean.rotation.x = w.skate * 0.08 + crouch * 0.16 - w.air * 0.06;
-    lean.position.y = -crouch * 0.26;
+    lean.rotation.x = w.skate * 0.08 + w.fast * 0.15 + crouch * 0.16 - w.air * 0.06 + press;
+    lean.position.y = -crouch * 0.26 - knee.x * 0.2 - Math.max(0, kneeC) * 0.18 + hop;
   }
 
   const _wa = new THREE.Vector3(), _wf = new THREE.Vector3();
   return {
     root, animate, kind: 'hero',
+    // a wrap/climb just happened: pulse the transition (asym biases which knee)
+    corner(asym = 0) {
+      corner.t = 0;
+      corner.asym = THREE.MathUtils.clamp(asym, -1, 1);
+      knee.v += 3.2;
+    },
+    // landing impact (0..~1.3) — feeds the knee suspension
+    land(amt = 0.5) { knee.v += amt * 8.5; },
     armDir: () => {
       if (!bones.leftarm || !bones.leftforearm) return null;
       bones.leftarm.getWorldPosition(_wa);
@@ -460,6 +529,9 @@ export function makeCharacter(opts = {}) {
       idle: actions.idle.getClip().name,
       skateTracks: actions.skate.getClip().tracks.length,
       weights: () => Object.fromEntries(Object.entries(w).map(([k, v]) => [k, +v.toFixed(2)])),
+      knee: () => +knee.x.toFixed(2),
+      neckY: () => bones.neck ? +bones.neck.rotation.y.toFixed(2) : null,
+      cornerT: () => +corner.t.toFixed(2),
       baseL: bases.left ? bases.left.toArray().map(v => +v.toFixed(3)) : null,
     },
   };
